@@ -7,7 +7,6 @@ export async function onRequestGet({ env }) {
     return new Response(JSON.stringify({
       ok: false,
       connected: false,
-      tradingEnabled: false,
       message: "DERIV_API_TOKEN is missing from the Pages production environment."
     }), { status: 503, headers });
   }
@@ -30,7 +29,6 @@ export async function onRequestGet({ env }) {
       return new Response(JSON.stringify({
         ok: false,
         connected: false,
-        tradingEnabled: false,
         httpStatus: upstream.status,
         message: data?.message || data?.error?.message || "Deriv rejected the authentication request."
       }), { status: 502, headers });
@@ -39,9 +37,8 @@ export async function onRequestGet({ env }) {
     return new Response(JSON.stringify({
       ok: true,
       connected: true,
-      tradingEnabled: false,
       appIdConfigured: true,
-      message: "Deriv API authentication succeeded. Trading remains disabled.",
+      message: "Deriv API authentication succeeded. Account-specific trading connection is the next step.",
       accounts: Array.isArray(data?.data) ? data.data.map(a => ({
         accountId: a.account_id || a.id || null,
         currency: a.currency || null,
@@ -53,7 +50,6 @@ export async function onRequestGet({ env }) {
     return new Response(JSON.stringify({
       ok: false,
       connected: false,
-      tradingEnabled: false,
       message: "Could not reach Deriv API.",
       detail: String(error?.message || error)
     }), { status: 502, headers });
