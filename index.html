@@ -32,13 +32,9 @@
     <div class="card"><div class="label">Trading mode</div><div class="value">Demo first</div><p>Demo/live account selection and trading permissions remain under your control.</p></div>
   </section>
   <section class="card">
-    <div class="label">Planned contract types</div>
-    <div class="types">
-      <span class="type">Matches</span><span class="type">Differs</span><span class="type">Even</span><span class="type">Odd</span>
-      <span class="type">Over</span><span class="type">Under</span><span class="type">Rise</span><span class="type">Fall</span>
-      <span class="type">Touch*</span><span class="type">No Touch*</span><span class="type">Higher*</span><span class="type">Lower*</span>
-    </div>
-    <p>*Only where supported for the selected market/account. Contract availability will be checked from Deriv's API.</p>
+    <div class="label">Active contract strategy</div>
+    <div class="types"><span class="type">DIGITDIFF only</span><span class="type">1 tick</span><span class="type">US$3.50 per trade</span><span class="type">Maximum 4 completed trades per market per cycle</span></div>
+    <p>Matches, Even, Odd, Over, Under and other contract types are not part of this active strategy.</p>
   </section>
   <section class="card" style="margin-top:12px">
     <div class="label">Enabled digit-contract markets · fixed allowlist</div>
@@ -47,7 +43,10 @@
     <p id="marketStatus">Market selection is configured in the backend.</p>
   </section>
   <section class="card" style="margin-top:12px">
-    <div class="label">Next steps</div>
+    <div class="label">Trading cycle settings</div>
+    <div class="types"><span class="type">10 Volatility markets</span><span class="type">4 completed trades per market</span><span class="type">US$3.50 stake per contract</span><span class="type">Restart after all markets finish and contracts settle</span></div>
+    <p>The next cycle must preserve each market's four-trade count until all ten markets have completed their cycle. A page refresh must not erase the cycle counters or cause duplicate purchases.</p>
+    <div class="label" style="margin-top:18px">Next steps</div>
     <ol>
       <li>Deploy this dashboard to Cloudflare Pages.</li>
       <li>Configure the secure Deriv API connection and demo authentication.</li>
@@ -121,7 +120,7 @@
     const marketStatus = document.getElementById("marketStatus");
     if (marketData.ok && Array.isArray(marketData.markets)) {
       marketList.innerHTML = marketData.markets.map(m => '<span class="type">' + m.name + ' · ' + m.symbol + '</span>').join("");
-      marketStatus.textContent = "10 configured markets · 6 digit contract types";
+      marketStatus.textContent = "10 configured markets · active contract type: DIGITDIFF only";
     } else {
       marketStatus.textContent = "Could not load market configuration.";
     }
