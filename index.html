@@ -57,6 +57,14 @@
     <div class="notice">Account authentication is connected. The real-time trading connection and contract execution workflow are the next integration steps.</div>
     <div class="actions"><span class="type">Execution connection: not yet integrated</span></div>
   </section>
+  <section class="card" style="margin-top:12px">
+    <div class="label">Live digit-differs scanner</div>
+    <div class="value" id="scannerStatus">Starting market scanner…</div>
+    <p id="scannerMeta">Checking all 10 configured volatility markets for one-tick DIGITDIFF signals.</p>
+    <div id="scannerResults" class="types"><span class="type">Waiting for first scan…</span></div>
+    <p>Signal rule: 100 recent ticks per market; unique lowest-frequency digit is red/predicted, unique highest-frequency digit is green; separation at least 2 digits; predicted frequency no higher than 9%. Rising probability since the previous scan cancels that signal.</p>
+    <p><strong>Signal monitoring only:</strong> this scanner does not submit trades yet. Order execution must be connected and tested against the selected Deriv account before automatic purchases are enabled.</p>
+  </section>
   <footer>Dogo.bot · Connection foundation · Never share your Deriv API token or place it in frontend code.</footer>
 </main>
 
@@ -68,6 +76,44 @@
   const cloudDot = cloud?.parentElement?.querySelector(".dot");
   if (cloud) cloud.textContent = "Pages backend deployed";
   if (cloudDot) cloudDot.style.background = "#55d6a5";
+  const scannerStatus = document.getElementById("scannerStatus");
+  const scannerMeta = document.getElementById("scannerMeta");
+  const scannerResults = document.getElementById("scannerResults");
+  const previousPercents = new Map();
+  async function runDigitScan() {
+    try {
+      const response = await fetch("/api/signals", { cache: "no-store" });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.message || "Scan failed");
+      const eligible = [];
+      for (const item of data.results || []) {
+        if (!item.eligible) continue;
+        const old = previousPercents.get(item.symbol + ":" + item.predictedDigit);
+        if (old !== undefined && item.predictedPercent > old) {
+          item.eligible = false;
+          item.reason = "PREDICTED_PERCENT_INCREASED";
+        } else eligible.push(item);
+      }
+      for (const item of data.results || []) {
+        if (item.predictedDigit !== undefined) {
+          previousPercents.set(item.symbol + ":" + item.predictedDigit, item.predictedPercent);
+        }
+      }
+      scannerStatus.textContent = eligible.length ? eligible.length + " qualifying signal(s)" : "Scanning · no qualifying signal";
+      scannerMeta.textContent = data.marketsScanned + " markets checked · " + new Date(data.scannedAt).toLocaleTimeString();
+      scannerResults.innerHTML = data.results.map(item => {
+        const label = item.eligible
+          ? "SIGNAL · DIGITDIFF " + item.predictedDigit + " @ " + item.predictedPercent.toFixed(1) + "%"
+          : item.reason || "No signal";
+        return '<span class="type">' + item.name + ' · ' + label + '</span>';
+      }).join("");
+    } catch (error) {
+      scannerStatus.textContent = "Scanner connection issue";
+      scannerMeta.textContent = error.message || "Could not retrieve live market data.";
+    }
+  }
+  runDigitScan();
+  setInterval(runDigitScan, 5000);
   try {
     const marketResponse = await fetch("/api/markets", { cache: "no-store" });
     const marketData = await marketResponse.json();
