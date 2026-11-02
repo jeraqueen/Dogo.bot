@@ -20,7 +20,7 @@
 </head>
 <body>
 <main>
-  <header class="top"><div class="brand">Dogo<span>.bot</span></div><div class="pill">SETUP PHASE · TRADING DISABLED</div></header>
+  <header class="top"><div class="brand">Dogo<span>.bot</span></div><div class="pill">SETUP PHASE · USER-CONTROLLED TRADING</div></header>
   <section>
     <p>DERIV AUTOMATION · MOBILE DASHBOARD</p>
     <h1>Your trading control room.</h1>
@@ -29,7 +29,7 @@
   <section class="grid" aria-label="Connection status">
     <div class="card"><div class="label">Deriv API</div><div class="value status"><i class="dot"></i><span id="apiStatus">Not connected</span></div><p>Secure authentication will be configured in the backend.</p></div>
     <div class="card"><div class="label">Cloud engine</div><div class="value status"><i class="dot"></i><span id="cloudStatus">Not deployed</span></div><p>Execution hosting must be verified before automation.</p></div>
-    <div class="card"><div class="label">Trading mode</div><div class="value">Demo first</div><p>Live trading stays disabled until demo tests and risk checks pass.</p></div>
+    <div class="card"><div class="label">Trading mode</div><div class="value">Demo first</div><p>Demo/live account selection and trading permissions remain under your control.</p></div>
   </section>
   <section class="card">
     <div class="label">Planned contract types</div>
@@ -48,8 +48,8 @@
       <li>Verify live quotes, contract availability, and demo contract lifecycle.</li>
       <li>Add your strategies when you provide them.</li>
     </ol>
-    <div class="notice">No trades can be placed from this page yet. The connection and execution engine have not been configured.</div>
-    <div class="actions"><button disabled>Start bot — not enabled</button></div>
+    <div class="notice">Account authentication is connected. The real-time trading connection and contract execution workflow are the next integration steps.</div>
+    <div class="actions"><span class="type">Execution connection: not yet integrated</span></div>
   </section>
   <footer>Dogo.bot · Connection foundation · Never share your Deriv API token or place it in frontend code.</footer>
 </main>
