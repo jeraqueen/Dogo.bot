@@ -1,57 +1,28 @@
+import { connectDeriv, derivRequest } from "../_lib/trading-engine.js";
+
 export async function onRequestGet({ env }) {
-  const appId = "34QAdfWKVQBkld9sq3LRi";
-  const token = env.DERIV_API_TOKEN;
-
   const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
-  if (!token) {
-    return new Response(JSON.stringify({
-      ok: false,
-      connected: false,
-      message: "DERIV_API_TOKEN is missing from the Pages production environment."
-    }), { status: 503, headers });
+  if (!env.DERIV_API_TOKEN) {
+    return new Response(JSON.stringify({ ok:false, connected:false, message:"Deriv API token is missing from the Cloudflare Pages production secrets." }), {status:503,headers});
   }
-
+  let ws;
   try {
-    const upstream = await fetch("https://api.derivws.com/trading/v1/options/accounts", {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Deriv-App-ID": appId,
-        "Accept": "application/json"
-      }
-    });
-
-    const raw = await upstream.text();
-    let data;
-    try { data = JSON.parse(raw); } catch { data = { message: raw.slice(0, 300) }; }
-
-    if (!upstream.ok) {
-      return new Response(JSON.stringify({
-        ok: false,
-        connected: false,
-        httpStatus: upstream.status,
-        message: data?.message || data?.error?.message || "Deriv rejected the authentication request."
-      }), { status: 502, headers });
-    }
-
+    ws = await connectDeriv();
+    const result = await derivRequest(ws, { authorize: env.DERIV_API_TOKEN }, 901);
+    const account = result.authorize || {};
+    const loginid = String(account.loginid || "");
+    const virtual = account.is_virtual === true || account.is_virtual === 1 || loginid.startsWith("VRTC");
+    const currency = String(account.currency || "").toUpperCase();
     return new Response(JSON.stringify({
-      ok: true,
-      connected: true,
-      appIdConfigured: true,
-      message: "Deriv API authentication succeeded. Account-specific trading connection is the next step.",
-      accounts: Array.isArray(data?.data) ? data.data.map(a => ({
-        accountId: a.account_id || a.id || null,
-        currency: a.currency || null,
-        accountType: a.account_type || null,
-        status: a.status || null
-      })) : undefined
-    }), { status: 200, headers });
+      ok:true, connected:true, authenticated:true,
+      accountMode: virtual ? "DEMO" : "LIVE",
+      currency: currency || null,
+      demoReady: virtual && currency === "USD",
+      message: virtual && currency === "USD"
+        ? "Deriv authenticated · virtual USD demo account."
+        : "Deriv authenticated, but this token is not connected to a virtual USD demo account. Demo trading will be rejected."
+    }), {status:200,headers});
   } catch (error) {
-    return new Response(JSON.stringify({
-      ok: false,
-      connected: false,
-      message: "Could not reach Deriv API.",
-      detail: String(error?.message || error)
-    }), { status: 502, headers });
-  }
+    return new Response(JSON.stringify({ok:false,connected:false,message:error?.message || "Deriv authentication failed. Check token validity and permissions."}), {status:502,headers});
+  } finally { try { ws?.close(); } catch {} }
 }
