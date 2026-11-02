@@ -17,7 +17,7 @@ export async function onRequestPost({request,env}) {
     const auth=await derivRequest(ws,{authorize:env.DERIV_API_TOKEN},1);
     const account=auth.authorize||{};
     const loginid=String(account.loginid||"");
-    if(account.is_virtual!==true && !loginid.startsWith("VRTC")) {
+    if(account.is_virtual!==true && account.is_virtual!==1 && !loginid.startsWith("VRTC")) {
       await db.prepare("UPDATE cycle_state SET active=0 WHERE id=1").run();
       return json({ok:false,active:false,message:"Safety stop: account is not verified as demo. No new orders were placed."},403);
     }
