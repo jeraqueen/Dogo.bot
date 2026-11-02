@@ -24,11 +24,11 @@
   <section>
     <p>DERIV AUTOMATION · MOBILE DASHBOARD</p>
     <h1>Your trading control room.</h1>
-    <p>This dashboard is the starting shell for the Deriv bot. We will connect the API and cloud backend before adding your strategies.</p>
+    <p>Dogo.bot is deployed on Cloudflare Pages. The dashboard checks the cloud API and Deriv authentication separately.</p>
   </section>
   <section class="grid" aria-label="Connection status">
-    <div class="card"><div class="label">Deriv API</div><div class="value status"><i class="dot"></i><span id="apiStatus">Not connected</span></div><p>Secure authentication will be configured in the backend.</p></div>
-    <div class="card"><div class="label">Cloud engine</div><div class="value status"><i class="dot"></i><span id="cloudStatus">Not deployed</span></div><p>Execution hosting must be verified before automation.</p></div>
+    <div class="card"><div class="label">Deriv API</div><div class="value status"><i class="dot"></i><span id="apiStatus">Not connected</span></div><p>Checks the configured Deriv API token through the server.</p></div>
+    <div class="card"><div class="label">Cloud engine</div><div class="value status"><i class="dot"></i><span id="cloudStatus">Not deployed</span></div><p>Cloudflare Pages Functions and the market configuration endpoint are checked here.</p></div>
     <div class="card"><div class="label">Trading mode</div><div class="value">Demo first</div><p>Demo/live account selection and trading permissions remain under your control.</p></div>
   </section>
   <section class="card">
@@ -48,13 +48,13 @@
     <p>The next cycle must preserve each market's four-trade count until all ten markets have completed their cycle. A page refresh must not erase the cycle counters or cause duplicate purchases.</p>
     <div class="label" style="margin-top:18px">Next steps</div>
     <ol>
-      <li>Deploy this dashboard to Cloudflare Pages.</li>
-      <li>Configure the secure Deriv API connection and demo authentication.</li>
+      <li>Dashboard hosted on Cloudflare Pages.</li>
+      <li>Verify Deriv API authentication and demo account authorization.</li>
       <li>Verify live quotes, contract availability, and demo contract lifecycle.</li>
-      <li>Add your strategies when you provide them.</li>
+      <li>The configured DIGITDIFF strategy is available to the demo execution engine.</li>
     </ol>
-    <div class="notice">Account authentication is connected. The real-time trading connection and contract execution workflow are the next integration steps.</div>
-    <div class="actions"><span class="type">Execution connection: not yet integrated</span></div>
+    <div class="notice">Status is checked against the deployed backend. Deriv authentication and demo-account authorization are separate checks.</div>
+    <div class="actions"><span class="type">Demo execution API: configured · PIN protected</span></div>
   </section>
   <section class="card" style="margin-top:12px" id="tradingControl">
     <div class="label">Demo execution control</div>
@@ -86,8 +86,18 @@
   const cloud = document.getElementById("cloudStatus");
   const apiDot = api?.parentElement?.querySelector(".dot");
   const cloudDot = cloud?.parentElement?.querySelector(".dot");
-  if (cloud) cloud.textContent = "Pages backend deployed";
-  if (cloudDot) cloudDot.style.background = "#55d6a5";
+  if (cloud) cloud.textContent = "Checking cloud backend…";
+  if (cloudDot) cloudDot.style.background = "#e0a13b";
+  try {
+    const cloudCheck = await fetch("/api/markets", { cache: "no-store" });
+    const cloudData = await cloudCheck.json();
+    if (!cloudCheck.ok || !cloudData.ok || !Array.isArray(cloudData.markets)) throw new Error("Cloud API check failed");
+    if (cloud) cloud.textContent = "Connected · Cloudflare Pages";
+    if (cloudDot) cloudDot.style.background = "#55d6a5";
+  } catch (_) {
+    if (cloud) cloud.textContent = "Cloud API unavailable";
+    if (cloudDot) cloudDot.style.background = "#e05252";
+  }
   const scannerStatus = document.getElementById("scannerStatus");
   const scannerMeta = document.getElementById("scannerMeta");
   const scannerResults = document.getElementById("scannerResults");
@@ -191,7 +201,7 @@
       if (api) api.textContent = "Connected to Deriv";
       if (apiDot) apiDot.style.background = "#55d6a5";
     } else {
-      if (api) api.textContent = result.message || "Authentication not verified";
+      if (api) api.textContent = result.message || "Deriv authentication not verified";
       if (apiDot) apiDot.style.background = "#e0a13b";
     }
   } catch (_) {
