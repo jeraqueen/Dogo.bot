@@ -50,7 +50,7 @@ export async function onRequestPost({request,env}) {
     if(allDone && Number(remaining?.n||0)===0) {
       await db.batch([
         db.prepare("UPDATE cycle_state SET cycle_number=cycle_number+1,updated_at=? WHERE id=1").bind(new Date().toISOString()),
-        db.prepare("UPDATE market_state SET trades_placed=0,trades_completed=0,last_predicted_digit=NULL,last_predicted_percent=NULL,status='ACTIVE'").run()
+        db.prepare("UPDATE market_state SET trades_placed=0,trades_completed=0,last_predicted_digit=NULL,last_predicted_percent=NULL,status='ACTIVE'")
       ]);
       return json({ok:true,active:true,cycleCompleted:true,cycleNumber:Number(state.cycle_number)+1,settled,message:"All ten markets completed four trades and all contracts settled. A new cycle has started."});
     }
