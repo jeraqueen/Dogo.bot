@@ -73,7 +73,7 @@ export function evaluateDigitDiffers(quotes, sampleSize = DIGIT_STRATEGY.sampleS
 
 function lastDigitFromQuote(value) {
   const quote = String(value ?? "").trim();
-  if (!/^-?\\d+(?:\\.\\d+)?$/.test(quote)) return null;
+  if (!/^-?\d+(?:\.\d+)?$/.test(quote)) return null;
   const decimal = quote.split(".")[1] || "";
   const relevant = decimal.length ? decimal : quote.replace("-", "");
   const char = relevant.slice(-1);
