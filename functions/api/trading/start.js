@@ -9,7 +9,7 @@ export async function onRequestPost({ request, env }) {
     const auth=await derivRequest(ws,{authorize:env.DERIV_API_TOKEN},1);
     const account=auth.authorize||{};
     const loginid=String(account.loginid||"");
-    if(account.is_virtual!==true && !loginid.startsWith("VRTC")) {
+    if(account.is_virtual!==true && account.is_virtual!==1 && !loginid.startsWith("VRTC")) {
       return json({ok:false,message:"Safety stop: this Deriv token authenticated to a non-demo account. No trades were placed."},403);
     }
     if(String(account.currency||"").toUpperCase()!=="USD") {
