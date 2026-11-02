@@ -41,6 +41,12 @@
     <p>*Only where supported for the selected market/account. Contract availability will be checked from Deriv's API.</p>
   </section>
   <section class="card" style="margin-top:12px">
+    <div class="label">Enabled digit-contract markets · fixed allowlist</div>
+    <p>Dogo.bot will use only these ten volatility markets for digit contracts.</p>
+    <div id="digitMarkets" class="types"><span class="type">Loading configured markets…</span></div>
+    <p id="marketStatus">Market selection is configured in the backend.</p>
+  </section>
+  <section class="card" style="margin-top:12px">
     <div class="label">Next steps</div>
     <ol>
       <li>Deploy this dashboard to Cloudflare Pages.</li>
@@ -63,6 +69,21 @@
   if (cloud) cloud.textContent = "Pages backend deployed";
   if (cloudDot) cloudDot.style.background = "#55d6a5";
   try {
+    const marketResponse = await fetch("/api/markets", { cache: "no-store" });
+    const marketData = await marketResponse.json();
+    const marketList = document.getElementById("digitMarkets");
+    const marketStatus = document.getElementById("marketStatus");
+    if (marketData.ok && Array.isArray(marketData.markets)) {
+      marketList.innerHTML = marketData.markets.map(m => '<span class="type">' + m.name + ' · ' + m.symbol + '</span>').join("");
+      marketStatus.textContent = "10 configured markets · 6 digit contract types";
+    } else {
+      marketStatus.textContent = "Could not load market configuration.";
+    }
+  } catch (_) {
+    const marketStatus = document.getElementById("marketStatus");
+    if (marketStatus) marketStatus.textContent = "Market configuration endpoint unavailable.";
+  }
+  try {
     const response = await fetch("/api/status", { cache: "no-store" });
     const result = await response.json();
     if (result.connected) {
@@ -81,4 +102,4 @@
 
 </body>
 </html>
-<!-- Cloudflare Pages deployment trigger: dashboard foundation -->
+<!-- Cloudflare Pages deployment trigger: digit market allowlist configured -->
