@@ -1,5 +1,9 @@
 export const DIGIT_STRATEGY = Object.freeze({
   contractType: "DIGITDIFF",
+  stake: 3.5,
+  currency: "USD",
+  maximumTradesPerMarket: 4,
+  cycleMarkets: 10,
   duration: 1,
   durationUnit: "t",
   sampleSize: 100,
