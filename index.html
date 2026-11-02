@@ -89,9 +89,9 @@
   if (cloud) cloud.textContent = "Checking cloud backend…";
   if (cloudDot) cloudDot.style.background = "#e0a13b";
   try {
-    const cloudCheck = await fetch("/api/markets", { cache: "no-store" });
+    const cloudCheck = await fetch("/api/health", { cache: "no-store" });
     const cloudData = await cloudCheck.json();
-    if (!cloudCheck.ok || !cloudData.ok || !Array.isArray(cloudData.markets)) throw new Error("Cloud API check failed");
+    if (!cloudCheck.ok || !cloudData.ok || cloudData.service !== "dogo-bot-pages-functions") throw new Error("Cloud Pages Functions health check failed");
     if (cloud) cloud.textContent = "Connected · Cloudflare Pages";
     if (cloudDot) cloudDot.style.background = "#55d6a5";
   } catch (_) {
