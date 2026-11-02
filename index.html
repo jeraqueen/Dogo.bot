@@ -53,6 +53,32 @@
   </section>
   <footer>Dogo.bot · Connection foundation · Never share your Deriv API token or place it in frontend code.</footer>
 </main>
+
+<script>
+(async function () {
+  const api = document.getElementById("apiStatus");
+  const cloud = document.getElementById("cloudStatus");
+  const apiDot = api?.parentElement?.querySelector(".dot");
+  const cloudDot = cloud?.parentElement?.querySelector(".dot");
+  if (cloud) cloud.textContent = "Pages backend deployed";
+  if (cloudDot) cloudDot.style.background = "#55d6a5";
+  try {
+    const response = await fetch("/api/status", { cache: "no-store" });
+    const result = await response.json();
+    if (result.connected) {
+      if (api) api.textContent = "Connected to Deriv";
+      if (apiDot) apiDot.style.background = "#55d6a5";
+    } else {
+      if (api) api.textContent = result.message || "Authentication not verified";
+      if (apiDot) apiDot.style.background = "#e0a13b";
+    }
+  } catch (_) {
+    if (api) api.textContent = "Connection check failed";
+    if (apiDot) apiDot.style.background = "#e05252";
+  }
+})();
+</script>
+
 </body>
 </html>
 <!-- Cloudflare Pages deployment trigger: dashboard foundation -->
