@@ -1,4 +1,4 @@
-import { authorized, json } from "../_lib/trading-engine.js";
+import { authorized, json } from "../../_lib/trading-engine.js";
 export async function onRequestGet({request,env}) {
   if(!authorized(request,env)) return json({ok:false,message:"Enter your Dogo.bot control PIN."},401);
   if(!env.BOT_DB) return json({ok:false,message:"Trading database is not configured."},503);
