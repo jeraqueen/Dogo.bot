@@ -56,6 +56,19 @@
     <div class="notice">Account authentication is connected. The real-time trading connection and contract execution workflow are the next integration steps.</div>
     <div class="actions"><span class="type">Execution connection: not yet integrated</span></div>
   </section>
+  <section class="card" style="margin-top:12px" id="tradingControl">
+    <div class="label">Demo execution control</div>
+    <div class="value" id="tradingState">Demo trading is stopped</div>
+    <p>US$3.50 per DIGITDIFF contract · 1 tick · maximum four trades per market in each ten-market cycle. The engine refuses any account that is not verified as demo USD.</p>
+    <label for="controlPin">Private control PIN</label>
+    <input id="controlPin" type="password" autocomplete="current-password" inputmode="numeric" placeholder="Enter your control PIN" style="display:block;width:100%;max-width:320px;margin:8px 0;padding:12px;border-radius:9px;border:1px solid var(--line);background:#0b1220;color:var(--text)">
+    <div class="actions">
+      <button id="startDemo" type="button">Start demo trading</button>
+      <button id="stopDemo" type="button" style="background:#e4a0a0;color:#2b0909">Stop trading</button>
+    </div>
+    <p id="tradingMeta">Enter your control PIN to arm the demo account. No live account is accepted.</p>
+    <div id="tradingCounts" class="types"></div>
+  </section>
   <section class="card" style="margin-top:12px">
     <div class="label">Live digit-differs scanner</div>
     <div class="value" id="scannerStatus">Starting market scanner…</div>
@@ -79,6 +92,49 @@
   const scannerMeta = document.getElementById("scannerMeta");
   const scannerResults = document.getElementById("scannerResults");
   const previousPercents = new Map();
+  const tradingState = document.getElementById("tradingState");
+  const tradingMeta = document.getElementById("tradingMeta");
+  const tradingCounts = document.getElementById("tradingCounts");
+  const controlPin = document.getElementById("controlPin");
+  const startDemo = document.getElementById("startDemo");
+  const stopDemo = document.getElementById("stopDemo");
+  let tradingTimer = null;
+  let activePin = sessionStorage.getItem("dogoControlPin") || "";
+  if (controlPin) controlPin.value = activePin;
+  async function tradingRequest(path, method="GET") {
+    const pin = activePin || controlPin?.value || "";
+    const response = await fetch(path, { method, cache:"no-store", headers: { "x-dogo-pin": pin } });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || "Trading request failed");
+    return data;
+  }
+  function renderTrading(data) {
+    tradingState.textContent = data.active ? "DEMO TRADING ACTIVE · cycle " + data.cycleNumber : "Demo trading is stopped";
+    tradingMeta.textContent = data.message || (data.openContracts + " open contract(s) · demo USD only");
+    if (Array.isArray(data.marketCounts)) tradingCounts.innerHTML = data.marketCounts.map(m => '<span class="type">' + m.symbol + " · " + m.trades_placed + "/4 placed · " + m.trades_completed + " settled</span>').join("");
+    else if (Array.isArray(data.markets)) tradingCounts.innerHTML = data.markets.map(m => '<span class="type">' + m.symbol + " · " + m.trades_placed + "/4 placed · " + m.trades_completed + " settled</span>').join("");
+  }
+  async function runTradingCycle() {
+    try { const data = await tradingRequest("/api/trading/run", "POST"); renderTrading(data); if (!data.active && tradingTimer) { clearInterval(tradingTimer); tradingTimer=null; } }
+    catch (error) { tradingMeta.textContent = error.message; if (/not verified|not USD|Safety stop/i.test(error.message) && tradingTimer) { clearInterval(tradingTimer); tradingTimer=null; } }
+  }
+  async function resumeTrading() {
+    if (!activePin) return;
+    try { const state = await tradingRequest("/api/trading/state"); renderTrading(state); if (state.active && !tradingTimer) { runTradingCycle(); tradingTimer=setInterval(runTradingCycle,5000); } }
+    catch (error) { tradingMeta.textContent = error.message; }
+  }
+  startDemo?.addEventListener("click", async () => {
+    activePin = controlPin?.value || "";
+    if (!activePin) { tradingMeta.textContent = "Enter your private control PIN."; return; }
+    try { const data=await tradingRequest("/api/trading/start","POST"); sessionStorage.setItem("dogoControlPin",activePin); renderTrading(data); tradingMeta.textContent=data.message; if (tradingTimer) clearInterval(tradingTimer); runTradingCycle(); tradingTimer=setInterval(runTradingCycle,5000); }
+    catch(error) { tradingMeta.textContent=error.message; }
+  });
+  stopDemo?.addEventListener("click", async () => {
+    activePin = controlPin?.value || activePin;
+    try { const data=await tradingRequest("/api/trading/stop","POST"); renderTrading(data); if (tradingTimer) clearInterval(tradingTimer); tradingTimer=null; }
+    catch(error) { tradingMeta.textContent=error.message; }
+  });
+  resumeTrading();
   async function runDigitScan() {
     try {
       const response = await fetch("/api/signals", { cache: "no-store" });
