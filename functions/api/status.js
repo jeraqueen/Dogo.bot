@@ -21,6 +21,7 @@ export async function onRequestGet({ env }) {
   } catch (error) {
     const e = error instanceof DerivError ? error : null;
     return new Response(JSON.stringify({ ok:false, connected:false, stage:e?.stage || "unknown",
-      httpStatus:e?.httpStatus ?? null, message:e?.message || "Deriv connection failed." }), { status:502, headers });
+      httpStatus:e?.httpStatus ?? null, retryAfter:e?.retryAfter ?? null,
+      message:e?.message || "Deriv connection failed." }), { status:502, headers });
   } finally { try { ws?.close(); } catch {} }
 }
