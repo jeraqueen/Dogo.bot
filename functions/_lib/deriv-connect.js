@@ -67,31 +67,25 @@ export async function getDemoAccount(env) {
     : "No demo account was returned for this token. Check the token and its trade scope.");
 }
 
-function openSocket(url, label) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const socket = new WebSocket(url);
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try { socket.close(); } catch {}
-      reject(new DerivError("websocket", `Timed out opening the Deriv ${label} WebSocket.`));
-    }, 10000);
-    socket.addEventListener("open", () => {
-      if (settled) { try { socket.close(); } catch {} return; }
-      settled = true; clearTimeout(timer); resolve(socket);
-    }, { once:true });
-    socket.addEventListener("error", () => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      reject(new DerivError("websocket", `Deriv rejected the ${label} WebSocket connection.`));
-    }, { once:true });
-    socket.addEventListener("close", event => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      reject(new DerivError("websocket", `Deriv closed the ${label} WebSocket before opening (code ${event.code || "unknown"}).`));
-    }, { once:true });
-  });
+async function openSocket(url, label) {
+  // Cloudflare Workers also supports outbound WebSockets via fetch Upgrade.
+  // Convert only the scheme; preserve the OTP query internally, never return/log it.
+  const handshakeUrl = url.replace(/^wss:/i, "https:").replace(/^ws:/i, "http:");
+  let response;
+  try {
+    response = await fetch(handshakeUrl, { headers: { Upgrade: "websocket" } });
+  } catch (e) {
+    throw new DerivError("websocket",
+      `Network error opening the Deriv ${label} WebSocket: ${e?.message || "fetch failed"}`);
+  }
+  const socket = response.webSocket;
+  if (!socket) {
+    throw new DerivError("websocket",
+      `Deriv ${label} WebSocket handshake failed (HTTP ${response.status}).`,
+      { httpStatus: response.status });
+  }
+  socket.accept();
+  return socket;
 }
 
 export async function openDemoSocket(env) {
