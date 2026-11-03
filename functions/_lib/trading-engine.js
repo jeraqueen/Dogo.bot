@@ -1,8 +1,7 @@
 import { DIGIT_MARKETS } from "./digit-markets.js";
 import { evaluateDigitDiffers, DIGIT_STRATEGY } from "./digit-strategy.js";
 
-const APP_ID = "34QAdfWKVQBkld9sq3LRi";
-const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
+import { openDemoSocket } from "./deriv-connect.js";
 
 export function json(data, status=200) {
   return Response.json(data, { status, headers: { "cache-control":"no-store" } });
@@ -17,13 +16,9 @@ export function authorized(request, env) {
   return diff === 0;
 }
 
-export function connectDeriv() {
-  return new Promise((resolve,reject)=>{
-    const ws = new WebSocket(WS_URL);
-    const timer = setTimeout(()=>{ try{ws.close();}catch{} reject(new Error("Deriv connection timed out")); },10000);
-    ws.addEventListener("open",()=>{clearTimeout(timer);resolve(ws);},{once:true});
-    ws.addEventListener("error",()=>{clearTimeout(timer);reject(new Error("Could not connect to Deriv"));},{once:true});
-  });
+export async function connectDeriv(env) {
+  // The returned socket is authenticated by Deriv's one-time-password flow.
+  return await openDemoSocket(env);
 }
 
 export function derivRequest(ws,payload,reqId) {
