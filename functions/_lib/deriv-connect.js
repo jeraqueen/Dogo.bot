@@ -1,6 +1,7 @@
 // functions/_lib/deriv-connect.js
 // Deriv's current Options REST + WebSocket connection flow for Cloudflare Pages.
 const API_BASE = "https://api.derivws.com";
+const DEFAULT_APP_ID = "34QAdfWKVQBkld9sq3LRi";
 
 export class DerivError extends Error {
   constructor(stage, message, extra = {}) {
@@ -14,7 +15,6 @@ export class DerivError extends Error {
 
 function requireEnv(env) {
   if (!env?.DERIV_API_TOKEN) throw new DerivError("config", "DERIV_API_TOKEN is missing from Cloudflare Pages Production secrets.");
-  if (!env?.DERIV_APP_ID) throw new DerivError("config", "DERIV_APP_ID is missing from Cloudflare Pages Production variables.");
 }
 
 async function derivRest(env, path, method = "GET") {
@@ -24,7 +24,7 @@ async function derivRest(env, path, method = "GET") {
       method,
       headers: {
         Authorization: `Bearer ${env.DERIV_API_TOKEN}`,
-        "Deriv-App-ID": String(env.DERIV_APP_ID),
+        "Deriv-App-ID": String(env.DERIV_APP_ID || DEFAULT_APP_ID),
         Accept: "application/json"
       }
     });
