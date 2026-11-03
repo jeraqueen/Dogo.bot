@@ -1,8 +1,7 @@
 import { DIGIT_MARKETS } from "./digit-markets.js";
 import { evaluateDigitDiffers, DIGIT_STRATEGY } from "./digit-strategy.js";
 
-const APP_ID = "34QAdfWKVQBkld9sq3LRi";
-const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
+import { openDemoSocket } from "./deriv-connect.js";
 
 export function json(data, status=200) {
   return Response.json(data, { status, headers: { "cache-control":"no-store" } });
@@ -17,37 +16,9 @@ export function authorized(request, env) {
   return diff === 0;
 }
 
-export function connectDeriv() {
-  return new Promise((resolve,reject)=>{
-    let settled = false;
-    const ws = new WebSocket(WS_URL);
-    const finishError = (message) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(new Error(message));
-    };
-    const timer = setTimeout(()=>{
-      try { ws.close(); } catch {}
-      finishError("Deriv WebSocket connection timed out after 10 seconds. Check Cloudflare outbound connectivity and Deriv service availability.");
-    },10000);
-    ws.addEventListener("open",()=>{
-      if (settled) { try { ws.close(); } catch {} return; }
-      settled = true;
-      clearTimeout(timer);
-      resolve(ws);
-    },{once:true});
-    ws.addEventListener("error",()=>{
-      finishError("Deriv WebSocket handshake failed. The request did not establish a connection; check the registered application ID, network access, and Deriv endpoint.");
-    },{once:true});
-    ws.addEventListener("close",(event)=>{
-      if (!settled) {
-        const code = Number.isFinite(event.code) ? event.code : "unknown";
-        const reason = String(event.reason || "").slice(0,160);
-        finishError(`Deriv WebSocket closed before connecting (code ${code})${reason ? `: ${reason}` : ""}.`);
-      }
-    },{once:true});
-  });
+export async function connectDeriv(env) {
+  // The returned socket is authenticated by Deriv's one-time-password flow.
+  return await openDemoSocket(env);
 }
 
 export function derivRequest(ws,payload,reqId) {
