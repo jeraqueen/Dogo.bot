@@ -1,28 +1,26 @@
-import { connectDeriv, derivRequest } from "../_lib/trading-engine.js";
+import { openDemoSocket, derivRequest, DerivError } from "../_lib/deriv-connect.js";
 
 export async function onRequestGet({ env }) {
   const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
-  if (!env.DERIV_API_TOKEN) {
-    return new Response(JSON.stringify({ ok:false, connected:false, message:"Deriv API token is missing from the Cloudflare Pages production secrets." }), {status:503,headers});
+  if (!env.DERIV_API_TOKEN || !env.DERIV_APP_ID) {
+    const missing = [!env.DERIV_API_TOKEN && "DERIV_API_TOKEN", !env.DERIV_APP_ID && "DERIV_APP_ID"].filter(Boolean);
+    return new Response(JSON.stringify({ ok:false, connected:false, stage:"config",
+      message:`Missing in Cloudflare Pages Production settings: ${missing.join(", ")}.` }), { status:503, headers });
   }
   let ws;
   try {
-    ws = await connectDeriv();
-    const result = await derivRequest(ws, { authorize: env.DERIV_API_TOKEN }, 901);
-    const account = result.authorize || {};
-    const loginid = String(account.loginid || "");
-    const virtual = account.is_virtual === true || account.is_virtual === 1 || loginid.startsWith("VRTC");
-    const currency = String(account.currency || "").toUpperCase();
-    return new Response(JSON.stringify({
-      ok:true, connected:true, authenticated:true,
-      accountMode: virtual ? "DEMO" : "LIVE",
-      currency: currency || null,
-      demoReady: virtual && currency === "USD",
-      message: virtual && currency === "USD"
-        ? "Deriv authenticated · virtual USD demo account."
-        : "Deriv authenticated, but this token is not connected to a virtual USD demo account. Demo trading will be rejected."
-    }), {status:200,headers});
+    const opened = await openDemoSocket(env);
+    ws = opened.ws;
+    await derivRequest(ws, { ping:1 }, 901);
+    const currency = opened.account.currency;
+    return new Response(JSON.stringify({ ok:true, connected:true, authenticated:true, accountMode:"DEMO",
+      currency:currency || null, demoReady:currency === "USD",
+      message:currency === "USD" ? "Deriv connected · virtual USD demo account." :
+        "Deriv connected, but the demo account is not USD. Demo trading will be rejected."
+    }), { status:200, headers });
   } catch (error) {
-    return new Response(JSON.stringify({ok:false,connected:false,message:error?.message || "Deriv authentication failed. Check token validity and permissions."}), {status:502,headers});
+    const e = error instanceof DerivError ? error : null;
+    return new Response(JSON.stringify({ ok:false, connected:false, stage:e?.stage || "unknown",
+      httpStatus:e?.httpStatus ?? null, message:e?.message || "Deriv connection failed." }), { status:502, headers });
   } finally { try { ws?.close(); } catch {} }
 }
