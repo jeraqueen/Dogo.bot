@@ -2,8 +2,8 @@ import { openDemoSocket, derivRequest, DerivError } from "../_lib/deriv-connect.
 
 export async function onRequestGet({ env }) {
   const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
-  if (!env.DERIV_API_TOKEN || !env.DERIV_APP_ID) {
-    const missing = [!env.DERIV_API_TOKEN && "DERIV_API_TOKEN", !env.DERIV_APP_ID && "DERIV_APP_ID"].filter(Boolean);
+  if (!env.DERIV_API_TOKEN) {
+    const missing = ["DERIV_API_TOKEN"];
     return new Response(JSON.stringify({ ok:false, connected:false, stage:"config",
       message:`Missing in Cloudflare Pages Production settings: ${missing.join(", ")}.` }), { status:503, headers });
   }
