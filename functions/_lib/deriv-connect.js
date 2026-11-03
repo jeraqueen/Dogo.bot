@@ -9,6 +9,7 @@ export class DerivError extends Error {
     this.name = "DerivError";
     this.stage = stage;
     this.httpStatus = extra.httpStatus ?? null;
+    this.retryAfter = extra.retryAfter ?? null;
     this.code = extra.code ?? null;
   }
 }
@@ -80,9 +81,11 @@ async function openSocket(url, label) {
   }
   const socket = response.webSocket;
   if (!socket) {
+    const retryAfter = response.headers.get("Retry-After");
+    const rateLimit = response.headers.get("RateLimit");
     throw new DerivError("websocket",
       `Deriv ${label} WebSocket handshake failed (HTTP ${response.status}).`,
-      { httpStatus: response.status });
+      { httpStatus: response.status, retryAfter, code: rateLimit ? `RateLimit: ${rateLimit}` : null });
   }
   socket.accept();
   return socket;
