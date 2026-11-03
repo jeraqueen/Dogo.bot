@@ -1,15 +1,10 @@
 import { DIGIT_MARKETS } from "../_lib/digit-markets.js";
+import { openPublicSocket } from "../_lib/deriv-connect.js";
 import { evaluateDigitDiffers } from "../_lib/digit-strategy.js";
 
-const APP_ID = "34QAdfWKVQBkld9sq3LRi";
 
 function openDerivSocket() {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`);
-    const timer = setTimeout(() => { try { ws.close(); } catch {} reject(new Error("Deriv market-data connection timed out")); }, 10000);
-    ws.addEventListener("open", () => { clearTimeout(timer); resolve(ws); }, { once: true });
-    ws.addEventListener("error", () => { clearTimeout(timer); reject(new Error("Could not connect to Deriv market data")); }, { once: true });
-  });
+  return openPublicSocket();
 }
 
 function request(ws, payload, requestId) {
