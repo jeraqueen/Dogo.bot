@@ -4,12 +4,7 @@ import { evaluateDigitDiffers } from "../_lib/digit-strategy.js";
 
 
 function openDerivSocket() {
-  return new Promise((resolve, reject) => {
-    const ws = await openPublicSocket();
-    const timer = setTimeout(() => { try { ws.close(); } catch {} reject(new Error("Deriv market-data connection timed out")); }, 10000);
-    ws.addEventListener("open", () => { clearTimeout(timer); resolve(ws); }, { once: true });
-    ws.addEventListener("error", () => { clearTimeout(timer); reject(new Error("Could not connect to Deriv market data")); }, { once: true });
-  });
+  return openPublicSocket();
 }
 
 function request(ws, payload, requestId) {
