@@ -5,15 +5,11 @@ export async function onRequestPost({ request, env }) {
   if (!env.BOT_DB) return json({ok:false,message:"Trading database binding is not ready. Deploy the latest Pages configuration."},503);
   let ws;
   try {
-    ws=await connectDeriv();
-    const auth=await derivRequest(ws,{authorize:env.DERIV_API_TOKEN},1);
-    const account=auth.authorize||{};
-    const loginid=String(account.loginid||"");
-    if(account.is_virtual!==true && account.is_virtual!==1 && !loginid.startsWith("VRTC")) {
-      return json({ok:false,message:"Safety stop: this Deriv token authenticated to a non-demo account. No trades were placed."},403);
-    }
+    const opened=await connectDeriv(env);
+    ws=opened.ws;
+    const account=opened.account;
     if(String(account.currency||"").toUpperCase()!=="USD") {
-      return json({ok:false,message:"Safety stop: the authenticated demo account is not USD. No trades were placed."},403);
+      return json({ok:false,message:"Safety stop: the selected demo account is not USD. No trades were placed."},403);
     }
     await env.BOT_DB.prepare("INSERT OR IGNORE INTO market_state (symbol) VALUES (?)").bind("R_10").run();
     const { DIGIT_MARKETS } = await import("../../_lib/digit-markets.js");
