@@ -25,7 +25,7 @@ input,select{background:#0a1422;color:var(--text);border:1px solid var(--line);b
 <section class="grid" id="summary">
  <div class="metric"><div class="label">Markets loaded</div><div class="value" id="loaded">0 / 10</div></div>
  <div class="metric"><div class="label">Strategy tests</div><div class="value" id="tested">0</div></div>
- <div class="metric"><div class="label">Candidates passing research gate</div><div class="value" id="passed">0</div></div>
+ <div class="metric"><div class="label">Candidates for deeper review</div><div class="value" id="passed">0</div></div>
  <div class="metric"><div class="label">Trading mode</div><div class="value warn">OFF</div></div>
 </section>
 <section class="panel"><div class="row"><h2 style="font-size:18px;margin:0">Market results</h2><div class="spacer"></div><span class="small">Only completed data loads are scored</span></div>
@@ -128,7 +128,7 @@ input,select{background:#0a1422;color:var(--text);border:1px solid var(--line);b
      // and the proposal payout / multiple-testing gates are not yet satisfied.
      const best=Math.max(d,p,o,t), lower=s.lower;
      if(lower>50)passed++;
-     rows.push({name,symbol,n:data.prices.length,d,p,o,t,lower,verdict:lower>50?"REVIEW":"NO EDGE YET"});
+     rows.push({name,symbol,n:data.prices.length,d,p,o,t,lower,verdict:lower>50?"REVIEW ONLY":"NO EDGE YET"});
      $("progress").textContent="Loaded "+loaded+" of 10 markets; tested "+tested+" strategy/market combinations…";
     }catch(err){rows.push({name,symbol,error:err.message})}
    }
