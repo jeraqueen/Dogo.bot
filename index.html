@@ -53,7 +53,7 @@ input,select{background:#0a1422;color:var(--text);border:1px solid var(--line);b
   ["Volatility 10 (1s)","1HZ10V"],["Volatility 25 (1s)","1HZ25V"],["Volatility 50 (1s)","1HZ50V"],["Volatility 75 (1s)","1HZ75V"],["Volatility 100 (1s)","1HZ100V"]
  ];
  const $=id=>document.getElementById(id), results=$("results"), scan=$("scan");
- let socket=null, seq=0, pending=new Map();
+ let socket=null, seq=0, pending=new Map(), marketMeta=new Map();
  function connect(){
   return new Promise((resolve,reject)=>{
    const ws=new WebSocket("wss://api.derivws.com/trading/v1/options/ws/public");
@@ -105,7 +105,7 @@ input,select{background:#0a1422;color:var(--text);border:1px solid var(--line);b
  async function loadSymbol(name,symbol){
   const d=await request({ticks_history:symbol,count:5000,end:"latest",style:"ticks"});
   if(!d.history||!Array.isArray(d.history.prices))throw new Error("No tick history for "+symbol);
-  return {name,symbol,prices:d.history.prices};
+  return {name,symbol,prices:d.history.prices,pipSize:marketMeta.get(symbol)?.pip_size};
  }
  scan.addEventListener("click",async()=>{
   scan.disabled=true;$("progress").textContent="Connecting and requesting historical ticks…";results.innerHTML='<tr><td colspan="8">Loading…</td></tr>';
@@ -119,7 +119,7 @@ input,select{background:#0a1422;color:var(--text);border:1px solid var(--line);b
     try{
      if(available.size&&!available.has(symbol)){rows.push({name,symbol,error:"Not listed by active_symbols"});continue}
      const data=await loadSymbol(name,symbol);loaded++;$("loaded").textContent=loaded+" / 10";
-     const s=score(data.prices);tested+=4;
+     const s=score(data.prices,data.pipSize);tested+=4;
      const d=s.stats.digit[1]?s.stats.digit[0]/s.stats.digit[1]*100:0;
      const p=s.stats.parity[1]?s.stats.parity[0]/s.stats.parity[1]*100:0;
      const o=s.stats.ou[1]?s.stats.ou[0]/s.stats.ou[1]*100:0;
