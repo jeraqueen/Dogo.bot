@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1220"><title>Dogo.bot Strategy Lab</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121e30;--line:#293b54;--muted:#9fb0c7;--text:#f3f6fb;--green:#4cdb9b;--amber:#f3bd61;--red:#f07878}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#09111e,#101d30);color:var(--text);font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+main{max-width:1100px;margin:auto;padding:20px 14px 48px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.brand{font-size:24px;font-weight:850}.brand span{color:var(--green)}.pill{font-size:11px;border:1px solid var(--line);padding:6px 10px;border-radius:99px;color:var(--amber)}
+h1{font-size:clamp(26px,5vw,38px);line-height:1.12;margin:20px 0 8px}p{color:var(--muted)}.sub{max-width:760px}.panel{background:rgba(18,30,48,.94);border:1px solid var(--line);border-radius:15px;padding:16px;margin:13px 0}.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.spacer{flex:1}.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:750;background:var(--green);color:#062116}.btn:disabled{opacity:.5}.status{font-size:13px;color:var(--muted)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--amber);margin-right:7px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.metric{background:#0d1726;border:1px solid var(--line);border-radius:12px;padding:13px}.label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.value{font-size:21px;font-weight:800;margin-top:5px}.small{font-size:12px;color:var(--muted)}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:10px 7px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:650}.good{color:var(--green)}.warn{color:var(--amber)}.bad{color:var(--red)}.tag{display:inline-block;border:1px solid var(--line);border-radius:8px;padding:4px 7px;margin:3px;font-size:12px;color:#d6e1f0}
+input,select{background:#0a1422;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px;max-width:100%}footer{font-size:12px;color:var(--muted);margin-top:24px}
+@media(max-width:520px){main{padding:15px 10px 35px}th,td{font-size:11px;padding:8px 4px}.panel{padding:12px}}
+</style>
+</head>
+<body><main>
+<header class="top"><div class="brand">Dogo<span>.bot</span> Strategy Lab</div><div class="pill">RESEARCH MODE · NO ORDERS SENT</div></header>
+<h1>Find evidence before risking a stake.</h1>
+<p class="sub">Loads real Deriv tick history for your ten Volatility markets and runs rolling, chronological tests. This build is a research scanner only: it cannot buy contracts or access a live account.</p>
+<section class="panel">
+ <div class="row"><div><div class="label">Market data connection</div><div id="connection"><span class="dot"></span>Not connected</div></div><div class="spacer"></div><button class="btn" id="scan">Load history & test strategies</button></div>
+ <p id="progress" class="small">Connects to Deriv public market data. No API token is required for public tick history.</p>
+ <div class="row"><span class="tag">5,000 ticks per market</span><span class="tag">100-tick lookback</span><span class="tag">Chronological 70/30 split</span><span class="tag">95% Wilson interval</span></div>
+</section>
+<section class="grid" id="summary">
+ <div class="metric"><div class="label">Markets loaded</div><div class="value" id="loaded">0 / 10</div></div>
+ <div class="metric"><div class="label">Strategy tests</div><div class="value" id="tested">0</div></div>
+ <div class="metric"><div class="label">Candidates passing research gate</div><div class="value" id="passed">0</div></div>
+ <div class="metric"><div class="label">Trading mode</div><div class="value warn">OFF</div></div>
+</section>
+<section class="panel"><div class="row"><h2 style="font-size:18px;margin:0">Market results</h2><div class="spacer"></div><span class="small">Only completed data loads are scored</span></div>
+<div style="overflow-x:auto"><table><thead><tr><th>Market</th><th>Ticks</th><th>Digit-diff hit %</th><th>Parity hit %</th><th>Over/under %</th><th>Rise/fall %</th><th>Best 95% lower bound</th><th>Verdict</th></tr></thead><tbody id="results"><tr><td colspan="8" class="small">Press “Load history & test strategies”.</td></tr></tbody></table></div></section>
+<section class="panel"><h2 style="font-size:18px;margin:0 0 8px">What is being tested?</h2>
+<div class="grid">
+<div class="metric"><b>Digit Differs</b><p class="small">Select the least frequent last digit using only the previous 100 ticks; score whether the next tick differs. Ties are skipped.</p></div>
+<div class="metric"><b>Even / Odd</b><p class="small">Select the less frequent parity in the previous window; score the next digit. This tests frequency imbalance, not a guaranteed prediction.</p></div>
+<div class="metric"><b>Over / Under</b><p class="small">Choose the less frequent half (0–4 or 5–9) from the previous window and score the next tick.</p></div>
+<div class="metric"><b>Rise / Fall momentum</b><p class="small">Use the direction of the last five price changes to predict the next tick direction. Flat moves are excluded.</p></div>
+</div></section>
+<section class="panel"><h2 style="font-size:18px;margin:0 0 8px">Profitability gate — not just win rate</h2>
+<p>Historical hit rate alone is not enough. Before any strategy can qualify for demo execution, we must obtain the current Deriv proposal for the exact contract, stake, barrier and duration, calculate its break-even probability, then confirm positive expected value on untouched out-of-sample data.</p>
+<div class="grid">
+<div class="metric"><div class="label">Required checks</div><p class="small">Live proposal payout · exact contract rules · confidence interval · enough independent trades · multiple-testing correction · drawdown · demo forward test.</p></div>
+<div class="metric"><div class="label">Safety limits reserved for later demo phase</div><p class="small">US$3.50 stake ceiling · maximum four completed trades per market · no Martingale · demo USD account only · manual stop control.</p></div>
+</div>
+</section>
+<footer>Dogo.bot Strategy Lab · Public market data only · Research results are not trade recommendations. A strategy is not approved merely because its win rate is high.</footer>
+</main>
+<script>
+(() => {
+ const symbols = [
+  ["Volatility 10","R_10"],["Volatility 25","R_25"],["Volatility 50","R_50"],["Volatility 75","R_75"],["Volatility 100","R_100"],
+  ["Volatility 10 (1s)","1HZ10V"],["Volatility 25 (1s)","1HZ25V"],["Volatility 50 (1s)","1HZ50V"],["Volatility 75 (1s)","1HZ75V"],["Volatility 100 (1s)","1HZ100V"]
+ ];
+ const $=id=>document.getElementById(id), results=$("results"), scan=$("scan");
+ let socket=null, seq=0, pending=new Map();
+ function connect(){
+  return new Promise((resolve,reject)=>{
+   const ws=new WebSocket("wss://api.derivws.com/trading/v1/options/ws/public");
+   const timer=setTimeout(()=>{try{ws.close()}catch{} reject(new Error("Deriv connection timed out"))},12000);
+   ws.onopen=()=>{clearTimeout(timer);socket=ws;$("connection").innerHTML='<span class="dot" style="background:var(--green)"></span>Connected to Deriv public data';resolve(ws)};
+   ws.onerror=()=>{clearTimeout(timer);reject(new Error("Could not connect to Deriv public market data"))};
+   ws.onclose=()=>{$("connection").innerHTML='<span class="dot" style="background:var(--red)"></span>Disconnected'};
+   ws.onmessage=e=>{
+    let d;try{d=JSON.parse(e.data)}catch{return}
+    const id=d.req_id;
+    if(id && pending.has(id)){const p=pending.get(id);pending.delete(id);clearTimeout(p.timer);if(d.error)p.reject(new Error(d.error.message||"Deriv API error"));else p.resolve(d)}
+   };
+  });
+ }
+ function request(payload){
+  return new Promise((resolve,reject)=>{
+   if(!socket||socket.readyState!==1)return reject(new Error("Not connected"));
+   const id=++seq;payload.req_id=id;
+   const timer=setTimeout(()=>{pending.delete(id);reject(new Error("Market data request timed out"))},18000);
+   pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify(payload));
+  });
+ }
+ function lastDigit(v){
+  const s=String(v);const digits=s.replace(/[^0-9]/g,"");return Number(digits.slice(-1));
+ }
+ function wilson(w,n){
+  if(!n)return [0,0];const z=1.96,p=w/n,z2=z*z,den=1+z2/n,mid=(p+z2/(2*n))/den,half=z*Math.sqrt((p*(1-p)+z2/(4*n))/n)/den;
+  return [Math.max(0,mid-half)*100,Math.min(1,mid+half)*100];
+ }
+ function score(prices){
+  const ds=prices.map(lastDigit), split=Math.floor(prices.length*.7), start=Math.max(101,split), stats={digit:[0,0],parity:[0,0],ou:[0,0],trend:[0,0]};
+  for(let i=start;i<prices.length-1;i++){
+   const win=ds.slice(i-100,i), next=ds[i];
+   const counts=Array(10).fill(0);win.forEach(d=>counts[d]++);
+   const min=Math.min(...counts), mins=counts.map((v,j)=>v===min?j:-1).filter(v=>v>=0);
+   if(mins.length===1){stats.digit[1]++;if(next!==mins[0])stats.digit[0]++}
+   const parity=[0,0];win.forEach(d=>parity[d%2]++);
+   if(parity[0]!==parity[1]){const pick=parity[0]<parity[1]?0:1;stats.parity[1]++;if(next%2===pick)stats.parity[0]++}
+   const halves=[0,0];win.forEach(d=>halves[d<5?0:1]++);
+   if(halves[0]!==halves[1]){const pick=halves[0]<halves[1]?0:1;stats.ou[1]++;if((next<5?0:1)===pick)stats.ou[0]++}
+   let momentum=0;for(let j=i-5;j<i;j++)momentum+=Math.sign(prices[j]-prices[j-1]);
+   const move=Math.sign(prices[i]-prices[i-1]);
+   if(momentum!==0&&move!==0){stats.trend[1]++;if(Math.sign(momentum)===move)stats.trend[0]++}
+  }
+  const pct=k=>stats[k][1]?stats[k][0]/stats[k][1]*100:0;
+  const intervals=Object.keys(stats).map(k=>wilson(...stats[k])[0]);
+  return {stats,pct,lower:Math.max(...intervals)};
+ }
+ async function loadSymbol(name,symbol){
+  const d=await request({ticks_history:symbol,count:5000,end:"latest",style:"ticks"});
+  if(!d.history||!Array.isArray(d.history.prices))throw new Error("No tick history for "+symbol);
+  return {name,symbol,prices:d.history.prices};
+ }
+ scan.addEventListener("click",async()=>{
+  scan.disabled=true;$("progress").textContent="Connecting and requesting historical ticks…";results.innerHTML='<tr><td colspan="8">Loading…</td></tr>';
+  let loaded=0, tested=0, passed=0, rows=[];
+  try{
+   if(!socket||socket.readyState!==1)await connect();
+   // Confirm market names/symbol availability before requesting individual histories.
+   const active=await request({active_symbols:"brief",product_type:"basic"});
+   const available=new Set((active.active_symbols||[]).map(x=>x.symbol));
+   for(const [name,symbol] of symbols){
+    try{
+     if(available.size&&!available.has(symbol)){rows.push({name,symbol,error:"Not listed by active_symbols"});continue}
+     const data=await loadSymbol(name,symbol);loaded++;$("loaded").textContent=loaded+" / 10";
+     const s=score(data.prices);tested+=4;
+     const d=s.stats.digit[1]?s.stats.digit[0]/s.stats.digit[1]*100:0;
+     const p=s.stats.parity[1]?s.stats.parity[0]/s.stats.parity[1]*100:0;
+     const o=s.stats.ou[1]?s.stats.ou[0]/s.stats.ou[1]*100:0;
+     const t=s.stats.trend[1]?s.stats.trend[0]/s.stats.trend[1]*100:0;
+     // This gate is deliberately provisional: confidence interval must beat chance,
+     // and the proposal payout / multiple-testing gates are not yet satisfied.
+     const best=Math.max(d,p,o,t), lower=s.lower;
+     if(lower>50)passed++;
+     rows.push({name,symbol,n:data.prices.length,d,p,o,t,lower,verdict:lower>50?"REVIEW":"NO EDGE YET"});
+     $("progress").textContent="Loaded "+loaded+" of 10 markets; tested "+tested+" strategy/market combinations…";
+    }catch(err){rows.push({name,symbol,error:err.message})}
+   }
+   $("tested").textContent=tested;$("passed").textContent=passed;
+   results.innerHTML=rows.map(r=>r.error?'<tr><td>'+r.name+'</td><td colspan="7" class="warn">'+r.error+'</td></tr>':
+    '<tr><td>'+r.name+'<div class="small">'+r.symbol+'</div></td><td>'+r.n.toLocaleString()+'</td><td>'+r.d.toFixed(2)+'%</td><td>'+r.p.toFixed(2)+'%</td><td>'+r.o.toFixed(2)+'%</td><td>'+r.t.toFixed(2)+'%</td><td>'+r.lower.toFixed(2)+'%</td><td class="'+(r.lower>50?'warn':'bad')+'">'+r.verdict+'</td></tr>').join("");
+   $("progress").textContent="Finished. A REVIEW label is not approval: exact Deriv payout, larger samples, multiple-testing correction and demo forward-testing are still required.";
+  }catch(err){$("progress").textContent=err.message;results.innerHTML='<tr><td colspan="8" class="bad">'+err.message+'</td></tr>'}
+  finally{scan.disabled=false}
+ });
+})();
+</script></body></html>
