@@ -71,8 +71,7 @@ export async function onRequestGet({ request }) {
     ws = await openPublicSocket();
     let reqId = 1;
     const activeResponse = await derivRequest(ws, {
-      active_symbols: "brief",
-      contract_type: ["DIGITMATCH"]
+      active_symbols: "brief"
     }, reqId++);
     const all = activeResponse.active_symbols || [];
     const candidates = all.filter(item => isVolatility(item) && getSymbol(item)).slice(0, MAX_CANDIDATES);
