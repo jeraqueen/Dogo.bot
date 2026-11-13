@@ -7,7 +7,7 @@ export async function onRequestGet(){
   let ws;
   try{
     ws=await openPublicSocket();
-    const response=await derivRequest(ws,{active_symbols:"brief",contract_type:["DIGITMATCH"]},1);
+    const response=await derivRequest(ws,{active_symbols:"brief"},1);
     const markets=(response.active_symbols||[])
       .filter(x=>/volatility\s*(10|15|25|30|50|75|90|100)/i.test(nameOf(x)))
       .map(x=>({name:nameOf(x),symbol:symbolOf(x),pipSize:x.pip_size||x.pip||null}));
