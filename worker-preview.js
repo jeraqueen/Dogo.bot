@@ -38,20 +38,211 @@ async function scanSignals(){
  }finally{try{ws.close();}catch{}}
 }
 export class DogoTrader{
- constructor(ctx,env){this.ctx=ctx;this.env=env;this.busy=false;this.demoWs=null;}
+ constructor(ctx,env){
+  this.ctx=ctx;this.env=env;this.busy=false;this.tradeBusy=false;this.demoWs=null;this.publicWs=null;
+  this.reqId=1000;this.feedReady=false;this.liveBuffers={};this.marketMeta={};this.liveMarkets=[];
+  this.subscriptionSymbols={};this.lastPersistAt=0;this.lastAttemptAt=0;
+ }
  async get(){return (await this.ctx.storage.get("state"))||initial();}
  async put(s){s.updatedAt=now();await this.ctx.storage.put("state",s);}
- async connection(s){if(this.demoWs&&this.demoWs.readyState===1)return this.demoWs;const saved=await this.ctx.storage.get("demoAccountId");const d=await demoSocket(this.env,saved);this.demoWs=d.ws;await this.ctx.storage.put("demoAccountId",d.accountId);return this.demoWs;}
- closeConnection(){try{this.demoWs?.close();}catch{}this.demoWs=null;}
- async fetch(req){const p=new URL(req.url).pathname;if(req.method==="GET"&&p==="/state"){const s=await this.get();return json(s);}if(req.method==="POST"&&p==="/start"){const b=await req.json().catch(()=>({})),stake=Number(b.stake);if(!Number.isFinite(stake)||stake<.35||stake>1000)return json({ok:false,message:"Stake must be between $0.35 and $1,000."},400);const s=await this.get();if(s.purchasePending||s.purchaseUncertain)return json({ok:false,message:"A previous purchase has an uncertain outcome. Reconcile it before restarting; no duplicate purchase will be attempted."},409);const incoming=Array.isArray(b.signals)?b.signals:[];s.signals=incoming.filter(x=>typeof x.symbol==="string"&&Number.isInteger(Number(x.digit))&&Number(x.digit)>=0&&Number(x.digit)<=9).slice(0,18);s.scannedAt=s.signals.length?now():s.scannedAt;Object.assign(s,{ok:true,active:true,mode:"DEMO",stake:+stake.toFixed(2),lastError:null,backoffMs:0});event(s,"Demo bot loaded · DIGITMATCH · stake $"+stake.toFixed(2),"success");await this.put(s);await this.ctx.storage.setAlarm(Date.now()+100);return json({ok:true,active:true,message:"Demo bot loaded. Preparing the first qualifying DIGITMATCH contract."});}if(req.method==="POST"&&p==="/stop"){const s=await this.get();s.active=false;event(s,s.openContract?"Stop requested · no new purchases; current demo contract will settle.":"Bot stopped · no new purchases.","warning");await this.put(s);if(s.openContract||s.purchasePending)await this.ctx.storage.setAlarm(Date.now()+1000);else{await this.ctx.storage.deleteAlarm();this.closeConnection();}return json({ok:true,active:false,settlingOpenContract:!!s.openContract,message:s.openContract?"Stop received. Current demo contract will settle; no new buys.":"Stop received. No new buys."});}return json({ok:false,message:"Not found"},404);}
- async alarm(){if(this.busy){await this.ctx.storage.setAlarm(Date.now()+1500);return;}this.busy=true;try{let s=await this.get();if(!s.active&&!s.openContract&&!s.purchasePending){await this.ctx.storage.deleteAlarm();this.closeConnection();return;}if(s.purchasePending){s.active=false;s.purchaseUncertain=true;s.lastError="Purchase outcome uncertain after interruption. Bot paused to prevent a duplicate buy; reconcile Deriv transactions before restarting.";event(s,s.lastError,"error");await this.put(s);await this.ctx.storage.deleteAlarm();this.closeConnection();return;}const ws=await this.connection(s);let reqId=100;
- if(s.openContract){const r=await ask(ws,{proposal_open_contract:1,contract_id:Number(s.openContract.contractId)},reqId++),c=r.proposal_open_contract||{};if(c.is_sold===1||c.is_sold===true||c.status==="won"||c.status==="lost"){const profit=Number(c.profit||0),won=c.status==="won"||profit>0,tx={contractId:s.openContract.contractId,symbol:s.openContract.symbol,name:s.openContract.name,digit:s.openContract.digit,stake:Number(s.openContract.stake),payout:Number(c.payout||0),profit,result:won?"WON":"LOST",settledAt:now()};if(won){s.wins++;s.grossProfit=+(s.grossProfit+Math.max(0,profit)).toFixed(2);s.marketWins[tx.symbol]=Number(s.marketWins[tx.symbol]||0)+1;}else s.losses++;s.netProfit=+(s.netProfit+profit).toFixed(2);s.transactions=[tx,...(s.transactions||[])].slice(0,100);s.openContract=null;s.lastSettlement=tx;s.lastError=null;event(s,"Contract "+tx.result+" · "+tx.symbol+" · digit #"+tx.digit+" · net "+(profit>=0?"+":"")+"$"+profit.toFixed(2),won?"success":"warning",{contractId:tx.contractId});await this.put(s);if(!s.active){await this.ctx.storage.deleteAlarm();this.closeConnection();return;}}else{s.openContract.status=c.status||"OPEN";s.openContract.currentProfit=Number(c.profit||0);await this.put(s);await this.ctx.storage.setAlarm(Date.now()+2500);return;}}
- s=await this.get();if(!s.active){await this.ctx.storage.deleteAlarm();this.closeConnection();return;}if(!s.scannedAt||Date.now()-Date.parse(s.scannedAt)>60000||!s.signals?.length){s.signals=await scanSignals();s.scannedAt=now();event(s,"Fresh market scan · "+s.signals.length+" qualifying DIGITMATCH signals","info");await this.put(s);}s=await this.get();let choices=(s.signals||[]).filter(x=>Number(s.marketWins[x.symbol]||0)<2);if(!choices.length&&s.signals?.length){s.marketWins={};s.cycleNumber++;event(s,"All qualifying markets reached two wins · starting cycle "+s.cycleNumber,"info");choices=s.signals;}if(!choices.length){s.lastError="No qualifying DIGITMATCH signal. Waiting for the next scan.";event(s,s.lastError,"warning");await this.put(s);await this.ctx.storage.setAlarm(Date.now()+30000);return;}const m=choices[0];if(!s.active||s.openContract){await this.ctx.storage.deleteAlarm();return;}
- const proposal=await ask(ws,{proposal:1,amount:s.stake,basis:"stake",contract_type:"DIGITMATCH",currency:"USD",duration:1,duration_unit:"t",underlying_symbol:m.symbol,barrier:String(m.digit),subscribe:1},reqId++),q=proposal.proposal;if(!q?.id||!Number.isFinite(Number(q.ask_price)))throw Error("Deriv did not return a valid streaming DIGITMATCH proposal.");s=await this.get();if(!s.active||s.openContract){await this.ctx.storage.deleteAlarm();return;}s.purchasePending={phase:"READY",symbol:m.symbol,name:m.name,digit:m.digit,stake:s.stake,proposalId:q.id,startedAt:now()};event(s,"Proposal accepted · "+m.symbol+" · DIGITMATCH #"+m.digit+" · ask $"+Number(q.ask_price).toFixed(2),"info");await this.put(s);s=await this.get();if(!s.active){s.purchasePending=null;event(s,"Purchase cancelled before submission because Stop was pressed.","warning");await this.put(s);await this.ctx.storage.deleteAlarm();return;}s.purchasePending.phase="SENT";s.purchasePending.sentAt=now();await this.put(s);
- let buyResponse;try{buyResponse=await ask(ws,{buy:q.id,price:Number(q.ask_price)},reqId++);}catch(e){s=await this.get();s.active=false;s.purchaseUncertain=true;s.lastError="Buy response uncertain: "+e.message+" Bot paused to prevent duplicate purchases.";event(s,s.lastError,"error");await this.put(s);await this.ctx.storage.deleteAlarm();this.closeConnection();return;}
- const bought=buyResponse.buy;if(!bought?.contract_id){s=await this.get();s.active=false;s.purchaseUncertain=true;s.lastError="Deriv buy response did not contain a contract ID. Bot paused; reconcile account transactions before restarting.";event(s,s.lastError,"error");await this.put(s);await this.ctx.storage.deleteAlarm();this.closeConnection();return;}
- s=await this.get();s.purchasePending=null;s.purchaseUncertain=false;s.contractsOpened++;s.openContract={contractId:String(bought.contract_id),symbol:m.symbol,name:m.name,digit:m.digit,stake:Number(bought.buy_price||s.stake),payout:Number(bought.payout||0),boughtAt:now(),status:"OPEN",currentProfit:0};s.currentMarket=m.symbol;s.lastError=null;event(s,"DEMO PURCHASE CONFIRMED · "+m.symbol+" · DIGITMATCH #"+m.digit+" · contract "+bought.contract_id,"success",{contractId:String(bought.contract_id)});await this.put(s);await this.ctx.storage.setAlarm(Date.now()+2500);
- }catch(e){let s=await this.get();s.lastError=e?.message||"Trading engine error";event(s,"Trading engine: "+s.lastError,"error");if(isRateLimit(e)){s.backoffMs=Math.min(Math.max(Number(s.backoffMs||15000)*2,30000),300000);event(s,"Deriv rate limit · backing off "+Math.round(s.backoffMs/1000)+" seconds; no rapid reconnect loop.","warning");}else{s.backoffMs=Math.min(Math.max(Number(s.backoffMs||5000)*2,5000),60000);}await this.put(s);if(s.purchasePending){s.active=false;s.purchaseUncertain=true;s.lastError="Purchase may have reached Deriv but confirmation was lost. Bot paused to prevent a duplicate buy. Check Deriv transactions.";event(s,s.lastError,"error");await this.put(s);await this.ctx.storage.deleteAlarm();this.closeConnection();}else if(s.active||s.openContract)await this.ctx.storage.setAlarm(Date.now()+Number(s.backoffMs||15000));else{await this.ctx.storage.deleteAlarm();this.closeConnection();}}finally{this.busy=false;}}
+ async connection(){
+  if(this.demoWs&&this.demoWs.readyState===1)return this.demoWs;
+  const saved=await this.ctx.storage.get("demoAccountId"),d=await demoSocket(this.env,saved);
+  this.demoWs=d.ws;await this.ctx.storage.put("demoAccountId",d.accountId);return this.demoWs;
+ }
+ closeDemo(){try{this.demoWs?.close();}catch{}this.demoWs=null;}
+ closePublic(){try{this.publicWs?.close();}catch{}this.publicWs=null;this.feedReady=false;}
+ async startMarketFeed(){
+  if(this.publicWs&&this.publicWs.readyState===1&&this.feedReady)return;
+  this.feedReady=false;
+  const ws=await openSocket("wss://api.derivws.com/trading/v1/options/ws/public","public live tick stream");
+  this.publicWs=ws;this.subscriptionSymbols={};this.liveBuffers={};this.marketMeta={};this.liveMarkets=[];
+  ws.addEventListener("message",e=>{this.handleMarketMessage(e.data).catch(err=>this.feedFailure(err));});
+  ws.addEventListener("close",()=>{if(this.publicWs===ws){this.publicWs=null;this.feedReady=false;this.feedFailure(new Error("Deriv live tick stream disconnected."));}});
+  ws.addEventListener("error",()=>{this.feedFailure(new Error("Deriv live tick stream reported a socket error."));});
+  const active=await ask(ws,{active_symbols:"brief"},this.reqId++);
+  const family=n=>String(n||"").match(/volatility\s*(10|25|50|75|100)/i)?.[1]||"";
+  const nameOf=x=>x.display_name||x.underlying_symbol_name||x.symbol||x.underlying_symbol||"Volatility market";
+  const symbols=(active.active_symbols||[])
+   .filter(x=>family(nameOf(x))&&(x.symbol||x.underlying_symbol))
+   .sort((a,b)=>Number(String(nameOf(b)).toLowerCase().includes("(1s)"))-Number(String(nameOf(a)).toLowerCase().includes("(1s)")))
+   .filter((x,i,a)=>a.findIndex(y=>family(nameOf(y))===family(nameOf(x)))===i).slice(0,5);
+  if(!symbols.length)throw new Error("Deriv returned no supported Volatility 10/25/50/75/100 markets.");
+  for(const m of symbols){
+   const symbol=m.symbol||m.underlying_symbol,name=nameOf(m),pip=Number(m.pip_size||m.pip||0.01);
+   this.marketMeta[symbol]={symbol,name,pip};
+   const h=await ask(ws,{ticks_history:symbol,count:100,end:"latest",style:"ticks",subscribe:1},this.reqId++);
+   const prices=h.history?.prices||[];
+   this.liveBuffers[symbol]=prices.slice(-100).map(q=>({quote:String(q),digit:lastDigit(q,pip)})).filter(x=>x.digit!==null);
+   if(h.subscription?.id)this.subscriptionSymbols[String(h.subscription.id)]=symbol;
+   this.liveMarkets.push(this.snapshot(symbol,null));
+   await sleep(350);
+  }
+  this.feedReady=true;
+  const s=await this.get();s.feedStatus="LIVE";s.feedError=null;s.marketCount=symbols.length;
+  event(s,"Live tick stream connected · "+symbols.length+" Volatility markets · one subscription per market","success");
+  await this.put(s);await this.persistMarkets(true);
+ }
+ decimals(pip){return Number.isFinite(pip)&&pip>0?Math.max(0,Math.min(10,Math.round(-Math.log10(pip)))):2;}
+ digitOf(quote,pip){
+  const n=Number(quote);if(!Number.isFinite(n))return null;
+  const f=n.toFixed(this.decimals(pip)).split(".")[1]||"";
+  const d=f.slice(-1);return /^\d$/.test(d)?Number(d):null;
+ }
+ countDigit(items,digit){return items.reduce((n,x)=>n+(x.digit===digit?1:0),0);}
+ distribution(items){
+  const counts=Array(10).fill(0);
+  for(const x of items)if(Number.isInteger(x.digit)&&x.digit>=0&&x.digit<=9)counts[x.digit]++;
+  const total=items.length||1;
+  return counts.map((count,digit)=>({digit,count,percent:+(count/total*100).toFixed(2)}));
+ }
+ snapshot(symbol,cursorDigit){
+  const meta=this.marketMeta[symbol]||{symbol,name:symbol,pip:0.01},buf=this.liveBuffers[symbol]||[];
+  const d100=this.distribution(buf.slice(-100)),ranked=[...d100].sort((a,b)=>b.count-a.count||a.digit-b.digit);
+  const low=[...d100].sort((a,b)=>a.count-b.count||a.digit-b.digit);
+  const green=ranked[0]||{digit:null,percent:0},red=low[0]||{digit:null,percent:0};
+  const last10=buf.slice(-10),prior10=buf.slice(-20,-10);
+  const redNotRising=prior10.length===10&&this.countDigit(last10,red.digit)<=this.countDigit(prior10,red.digit);
+  const separated=green.digit!==null&&red.digit!==null&&Math.abs(green.digit-red.digit)>=2;
+  const qualifies=buf.length>=100&&green.percent>=11.8&&red.percent<=9&&separated&&redNotRising;
+  const windows={};
+  for(const n of [100,50,25,10]){
+   const rows=this.distribution(buf.slice(-n)).sort((a,b)=>b.count-a.count||a.digit-b.digit);
+   windows[n]=buf.length>=n?rows.slice(0,2):[];
+  }
+  return {symbol,name:meta.name,tickCount:buf.length,lastQuote:buf.length?buf[buf.length-1].quote:null,
+   cursorDigit:cursorDigit===undefined?(buf.length?buf[buf.length-1].digit:null):cursorDigit,
+   greenDigit:green.digit,greenPercent:green.percent,redDigit:red.digit,redPercent:red.percent,
+   redNotRising,separated,qualifies,bars:d100,windows,marketWins:0,updatedAt:now()};
+ }
+ async persistMarkets(force=false){
+  if(!force&&Date.now()-this.lastPersistAt<900)return;
+  this.lastPersistAt=Date.now();
+  const s=await this.get(),wins=s.marketWins||{};
+  this.liveMarkets=this.liveMarkets.map(m=>({...m,marketWins:Number(wins[m.symbol]||0)}));
+  await this.ctx.storage.put("liveMarkets",this.liveMarkets);
+ }
+ async feedFailure(error){
+  const s=await this.get();s.feedStatus="RECONNECTING";s.feedError=error?.message||"Live feed error";
+  s.lastError=s.feedError;event(s,"Live feed: "+s.feedError,"error");await this.put(s);
+  if(s.active)await this.ctx.storage.setAlarm(Date.now()+5000);
+ }
+ async handleMarketMessage(raw){
+  let d;try{d=JSON.parse(typeof raw==="string"?raw:"");}catch{return;}
+  if(d.msg_type!=="tick"||!d.tick)return;
+  const t=d.tick,symbol=t.symbol||this.subscriptionSymbols[String(d.subscription?.id)]||"";
+  const meta=this.marketMeta[symbol];if(!meta)return;
+  const digit=this.digitOf(t.quote,Number(t.pip_size||meta.pip));if(digit===null)return;
+  const buf=this.liveBuffers[symbol]||[],before=this.snapshot(symbol,buf.length?buf[buf.length-1].digit:null);
+  buf.push({quote:String(t.quote),digit,epoch:t.epoch||null});if(buf.length>100)buf.shift();this.liveBuffers[symbol]=buf;
+  const next=this.snapshot(symbol,digit),idx=this.liveMarkets.findIndex(x=>x.symbol===symbol);
+  if(idx>=0)this.liveMarkets[idx]=next;else this.liveMarkets.push(next);
+  await this.persistMarkets();
+  if(before.qualifies&&digit===before.greenDigit){
+   const s=await this.get();
+   if(s.active&&!s.openContract&&!s.purchasePending&&Number(s.marketWins?.[symbol]||0)<2){
+    event(s,"GREEN CURSOR TOUCH · "+symbol+" · digit #"+digit+" · "+before.greenPercent+"% green / "+before.redPercent+"% red","success");
+    await this.put(s);this.tradeOnSignal(symbol,before).catch(e=>this.feedFailure(e));
+   }
+  }
+ }
+ async tradeOnSignal(symbol,signal){
+  if(this.tradeBusy||Date.now()-this.lastAttemptAt<1200)return;
+  this.tradeBusy=true;this.lastAttemptAt=Date.now();
+  try{
+   let s=await this.get();
+   if(!s.active||s.openContract||s.purchasePending||Number(s.marketWins?.[symbol]||0)>=2)return;
+   const symbols=this.liveMarkets.map(x=>x.symbol),wins=s.marketWins||{};
+   if(symbols.length&&symbols.every(x=>Number(wins[x]||0)>=2)){
+    s.marketWins={};s.cycleNumber=(s.cycleNumber||1)+1;
+    event(s,"Every monitored market reached two settled wins · rotation cycle "+s.cycleNumber+" restarted","info");
+    await this.put(s);
+   }
+   const ws=await this.connection(),id1=this.reqId++;
+   const proposal=await ask(ws,{proposal:1,amount:s.stake,basis:"stake",contract_type:"DIGITMATCH",currency:"USD",duration:1,duration_unit:"t",underlying_symbol:symbol,barrier:String(signal.greenDigit)},id1);
+   const q=proposal.proposal;
+   if(!q?.id||!Number.isFinite(Number(q.ask_price)))throw new Error("Deriv did not return a valid one-tick DIGITMATCH proposal.");
+   s=await this.get();if(!s.active||s.openContract){return;}
+   s.purchasePending={phase:"READY",symbol,name:this.marketMeta[symbol]?.name||symbol,digit:signal.greenDigit,stake:s.stake,proposalId:q.id,startedAt:now()};
+   event(s,"MATCHES proposal accepted · "+symbol+" · green digit #"+signal.greenDigit+" · ask $"+Number(q.ask_price).toFixed(2),"info");
+   await this.put(s);
+   s=await this.get();if(!s.active){s.purchasePending=null;event(s,"Purchase cancelled because Stop was pressed before buy submission.","warning");await this.put(s);return;}
+   s.purchasePending.phase="SENT";s.purchasePending.sentAt=now();await this.put(s);
+   let response;
+   try{response=await ask(ws,{buy:q.id,price:Number(q.ask_price)},this.reqId++);}
+   catch(e){s=await this.get();s.active=false;s.purchaseUncertain=true;s.lastError="Buy response uncertain: "+e.message+" Bot paused to prevent a duplicate purchase.";event(s,s.lastError,"error");await this.put(s);await this.ctx.storage.deleteAlarm();this.closePublic();this.closeDemo();return;}
+   const bought=response.buy;
+   if(!bought?.contract_id){s=await this.get();s.active=false;s.purchaseUncertain=true;s.lastError="Deriv buy response did not contain a contract ID. Reconcile demo transactions before restarting.";event(s,s.lastError,"error");await this.put(s);await this.ctx.storage.deleteAlarm();this.closePublic();this.closeDemo();return;}
+   s=await this.get();s.purchasePending=null;s.purchaseUncertain=false;s.contractsOpened++;
+   s.openContract={contractId:String(bought.contract_id),symbol,name:this.marketMeta[symbol]?.name||symbol,digit:signal.greenDigit,stake:Number(bought.buy_price||s.stake),payout:Number(bought.payout||0),boughtAt:now(),status:"OPEN",currentProfit:0};
+   s.currentMarket=symbol;s.lastError=null;
+   event(s,"DEMO PURCHASE CONFIRMED · DIGITMATCH #"+signal.greenDigit+" · "+symbol+" · contract "+bought.contract_id,"success",{contractId:String(bought.contract_id)});
+   await this.put(s);await this.ctx.storage.setAlarm(Date.now()+1200);
+  }catch(e){
+   const s=await this.get();s.lastError=e?.message||"Trade attempt failed";event(s,"MATCHES entry rejected · "+s.lastError,"error");
+   if(/429|rate.?limit|too many requests/i.test(s.lastError))s.backoffMs=Math.min(Math.max(Number(s.backoffMs||15000)*2,30000),300000);
+   await this.put(s);
+  }finally{this.tradeBusy=false;}
+ }
+ async fetch(req){
+  const p=new URL(req.url).pathname;
+  if(req.method==="GET"&&p==="/state"){
+   const s=await this.get();s.liveMarkets=this.liveMarkets.length?this.liveMarkets:((await this.ctx.storage.get("liveMarkets"))||[]);
+   return json(s);
+  }
+  if(req.method==="POST"&&p==="/start"){
+   const b=await req.json().catch(()=>({})),stake=Number(b.stake),s=await this.get();
+   if(!Number.isFinite(stake)||stake<.35||stake>1000)return json({ok:false,message:"Stake must be between $0.35 and $1,000."},400);
+   if(s.purchasePending||s.purchaseUncertain)return json({ok:false,message:"A previous purchase has an uncertain outcome. Reconcile it before restarting; no duplicate purchase will be attempted."},409);
+   if(s.active)return json({ok:true,active:true,message:"Live digit stream is already running."});
+   Object.assign(s,{ok:true,active:true,mode:"DEMO",stake:+stake.toFixed(2),lastError:null,feedStatus:"CONNECTING",feedError:null,marketWins:s.marketWins||{}});
+   event(s,"Starting live digit monitor · green-touch DIGITMATCH · demo only · stake $"+stake.toFixed(2),"info");await this.put(s);
+   try{await this.startMarketFeed();await this.ctx.storage.setAlarm(Date.now()+30000);return json({ok:true,active:true,message:"Live digit stream connected. The bot will open a one-tick MATCHES contract when the green cursor touches a qualifying digit."});}
+   catch(e){const failed=await this.get();failed.active=false;failed.feedStatus="ERROR";failed.feedError=e?.message||"Could not start live market feed";failed.lastError=failed.feedError;event(failed,"Live monitor failed: "+failed.feedError,"error");await this.put(failed);this.closePublic();return json({ok:false,active:false,message:failed.feedError},502);}
+  }
+  if(req.method==="POST"&&p==="/stop"){
+   const s=await this.get();s.active=false;event(s,s.openContract?"Stop requested · no new purchases; current demo contract will settle.":"Live scanner and demo bot stopped.","warning");await this.put(s);this.closePublic();
+   if(s.openContract||s.purchasePending)await this.ctx.storage.setAlarm(Date.now()+1000);
+   else{await this.ctx.storage.deleteAlarm();this.closeDemo();}
+   return json({ok:true,active:false,settlingOpenContract:!!s.openContract,message:s.openContract?"Stop received. Current demo contract will settle; no new buys.":"Live monitor stopped. No new buys."});
+  }
+  return json({ok:false,message:"Not found"},404);
+ }
+ async alarm(){
+  if(this.busy){await this.ctx.storage.setAlarm(Date.now()+1500);return;}
+  this.busy=true;
+  try{
+   let s=await this.get();
+   if(s.purchasePending){
+    s.active=false;s.purchaseUncertain=true;s.lastError="Purchase outcome uncertain after interruption. Bot paused to prevent a duplicate buy; reconcile Deriv transactions before restarting.";
+    event(s,s.lastError,"error");await this.put(s);await this.ctx.storage.deleteAlarm();this.closePublic();this.closeDemo();return;
+   }
+   if(s.openContract){
+    const ws=await this.connection(),r=await ask(ws,{proposal_open_contract:1,contract_id:Number(s.openContract.contractId)},this.reqId++),c=r.proposal_open_contract||{};
+    if(c.is_sold===1||c.is_sold===true||c.status==="won"||c.status==="lost"){
+     const profit=Number(c.profit||0),won=c.status==="won"||profit>0,tx={contractId:s.openContract.contractId,symbol:s.openContract.symbol,name:s.openContract.name,digit:s.openContract.digit,stake:Number(s.openContract.stake),payout:Number(c.payout||0),profit,result:won?"WON":"LOST",settledAt:now()};
+     if(won){s.wins++;s.grossProfit=+(s.grossProfit+Math.max(0,profit)).toFixed(2);s.marketWins[tx.symbol]=Number(s.marketWins[tx.symbol]||0)+1;}else s.losses++;
+     s.netProfit=+(s.netProfit+profit).toFixed(2);s.transactions=[tx,...(s.transactions||[])].slice(0,100);s.openContract=null;s.lastSettlement=tx;s.lastError=null;
+     event(s,"Contract "+tx.result+" · "+tx.symbol+" · digit #"+tx.digit+" · net "+(profit>=0?"+":"")+"$"+profit.toFixed(2),won?"success":"warning",{contractId:tx.contractId});
+     await this.put(s);await this.persistMarkets(true);
+     if(!s.active){await this.ctx.storage.deleteAlarm();this.closeDemo();return;}
+     await this.ctx.storage.setAlarm(Date.now()+30000);return;
+    }
+    s.openContract.status=c.status||"OPEN";s.openContract.currentProfit=Number(c.profit||0);await this.put(s);
+    await this.ctx.storage.setAlarm(Date.now()+1800);return;
+   }
+   if(!s.active){await this.ctx.storage.deleteAlarm();this.closePublic();this.closeDemo();return;}
+   if(!this.publicWs||this.publicWs.readyState!==1||!this.feedReady){
+    try{await this.startMarketFeed();s=await this.get();s.feedStatus="LIVE";s.feedError=null;await this.put(s);}
+    catch(e){s=await this.get();s.feedStatus="RECONNECTING";s.feedError=e?.message||"Feed reconnect failed";s.lastError=s.feedError;event(s,"Live feed reconnect: "+s.feedError,"error");await this.put(s);await this.ctx.storage.setAlarm(Date.now()+15000);return;}
+   }
+   await this.ctx.storage.setAlarm(Date.now()+30000);
+  }catch(e){
+   const s=await this.get();s.lastError=e?.message||"Trading engine error";event(s,"Trading engine: "+s.lastError,"error");await this.put(s);
+   if(s.active||s.openContract)await this.ctx.storage.setAlarm(Date.now()+10000);
+   else{await this.ctx.storage.deleteAlarm();this.closePublic();this.closeDemo();}
+  }finally{this.busy=false;}
+ }
 }
 export default{async fetch(req,env){const origin=req.headers.get("Origin")||"",u=new URL(origin||"https://invalid"),allowed=u.hostname==="26d1a910.dogo-bot.pages.dev"||u.hostname.endsWith(".dogo-bot.pages.dev"),headers={"Access-Control-Allow-Origin":allowed?origin:"https://26d1a910.dogo-bot.pages.dev","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, X-Dogo-Pin","Vary":"Origin","Cache-Control":"no-store"};if(req.method==="OPTIONS")return new Response(null,{status:204,headers});const p=new URL(req.url).pathname;if(p==="/health")return json({ok:true,service:"Dogo.bot preview",token_configured:!!env.DERIV_API_TOKEN,pin_configured:!!env.DOGO_CONTROL_PIN,mode:"DEMO_ONLY"});if(p==="/api/status"){try{const b=await rest(env,"/trading/v1/options/accounts"),accounts=b.data||[];return json({ok:true,connected:true,account_count:accounts.length,accounts:accounts.filter(x=>String(x.account_type||"").toLowerCase()==="demo"||x.is_virtual===true||String(x.account_id||x.loginid||"").startsWith("VRTC")).map(x=>({account_id:x.account_id||x.id,loginid:x.loginid,account_type:"demo",currency:x.currency})),message:"Authenticated · demo-only trading."});}catch(e){return json({ok:false,connected:false,error:e.message},502);}}
  if(p.startsWith("/api/preview/trading/")){const pin=req.headers.get("X-Dogo-Pin")||"";if(!env.DOGO_CONTROL_PIN||pin!==env.DOGO_CONTROL_PIN)return json({ok:false,message:"Preview control PIN is incorrect or not configured."},401);const stub=env.TRADER.get(env.TRADER.idFromName("dogo-preview-main")),path=p.slice("/api/preview/trading".length);if(path==="/state"&&req.method==="GET"){try{const r=await stub.fetch("https://trader/state");const s=await r.json();return json({...s,ok:true});}catch(e){return json({ok:false,message:"Could not read preview bot state: "+e.message},502);}}if(path==="/start"&&req.method==="POST")return stub.fetch(new Request("https://trader/start",{method:"POST",headers:{"Content-Type":"application/json"},body:await req.text()}));if(path==="/stop"&&req.method==="POST")return stub.fetch(new Request("https://trader/stop",{method:"POST"}));return json({ok:false,message:"Not found"},404);}return json({ok:false,message:"Not found"},404);}};
