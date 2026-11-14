@@ -33,7 +33,7 @@ export async function onRequestGet({request}){
   if(!Number.isFinite(threshold)||threshold<MIN_PERCENT||threshold>100)return Response.json({ok:false,message:"Frequency threshold must be between 11.8 and 100."},{status:400});
   const cache=globalThis.caches?.default;
   const pauseKey=new Request("https://dogo-cache.invalid/deriv/rate-limit-pause-v1");
-  if(cache){try{const pause=await cache.match(pauseKey);if(pause){const data=await pause.json();const remaining=Math.max(1,Math.ceil((Number(data.until)||0-Date.now())/1000));return Response.json({ok:false,message:"Deriv rate limit cooldown is active. Please wait before scanning again.",rateLimited:true,retryAfterSeconds:remaining,results:[]},{status:429,headers:{"cache-control":"no-store","retry-after":String(remaining)}});}}catch{}}
+  if(cache){try{const pause=await cache.match(pauseKey);if(pause){const data=await pause.json();const remaining=Math.max(1,Math.ceil(((Number(data.until)||Date.now())-Date.now())/1000));return Response.json({ok:false,message:"Deriv rate limit cooldown is active. Please wait before scanning again.",rateLimited:true,retryAfterSeconds:remaining,results:[]},{status:429,headers:{"cache-control":"no-store","retry-after":String(remaining)}});}}catch{}}
   let ws;
   try{
     ws=await openPublicSocket();
@@ -50,7 +50,7 @@ export async function onRequestGet({request}){
     });
     const candidates=all.filter(item=>isVolatility(item)&&getSymbol(item))
       .sort((a,b)=>Number(/\\(1s\\)/i.test(getName(b)))-Number(/\\(1s\\)/i.test(getName(a))))
-      .filter((item,index,array)=>array.findIndex(x=>/^volatility\\s*(10|25|50|75|100)/i.test(getName(x))&&getName(x).match(/volatility\\s*(10|25|50|75|100)/i)?.[1]===getName(item).match(/volatility\\s*(10|25|50|75|100)/i)?.[1])===index)
+      .filter((item,index,array)=>array.findIndex(x=>family(x)===family(item))===index)
       .slice(0,MAX_CANDIDATES);
     const results=[];
     for(const item of candidates){
