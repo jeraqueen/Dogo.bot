@@ -8,7 +8,8 @@ function lastDigit(quote){const s=String(quote??"").trim();if(!/^-?\d+(?:\.\d+)?
 function distribution(quotes,size){const sample=quotes.slice(-size);if(sample.length<size)return null;const counts=Array(10).fill(0);for(const quote of sample){const digit=lastDigit(quote);if(digit===null)return null;counts[digit]++;}return counts.map((count,digit)=>({digit,count,percent:Number((count/size*100).toFixed(2))})).sort((a,b)=>b.count-a.count||a.digit-b.digit);}
 function getSymbol(item){return item.symbol||item.underlying_symbol||"";}
 function getName(item){return item.display_name||item.underlying_symbol_name||item.symbol||item.underlying_symbol||"Volatility market";}
-function isVolatility(item){return /volatility\s*(10|15|20|25|30|50|75|90|100)/i.test(getName(item));}
+function family(item){return getName(item).match(/volatility\s*(10|25|50|75|100)/i)?.[1]||"";}
+function isVolatility(item){return !!family(item);}
 function analyze(quotes,threshold){const windows={};for(const size of WINDOWS)windows[size]=distribution(quotes,size);const windowLeaders={};for(const size of WINDOWS)windowLeaders[size]=(windows[size]||[]).slice(0,2).map((x,i)=>({...x,rank:i+1}));if(!windows[100])return{valid:false,reason:"INSUFFICIENT_TICKS",tickCount:quotes.length,requiredTicks:100,windowLeaders,windows:windowLeaders};const topDigits=windows[100].slice(0,2).map((item,index)=>{const qualifyingWindows=WINDOWS.filter(size=>(windows[size]||[]).some(x=>x.digit===item.digit&&x.percent>=threshold));return{...item,rank:index+1,qualifying:item.percent>=threshold||qualifyingWindows.length>=2,qualifyingWindows};});const qualifying=topDigits.filter(x=>x.qualifying);return{valid:true,hasSignal:qualifying.length>0,tickCount:quotes.length,mostAppearing:topDigits[0]?.digit??null,predictedDigits:qualifying.map(x=>x.digit),predictedDigit:qualifying[0]?.digit??null,topDigits,windowLeaders,windows:windowLeaders,threshold};}
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -49,7 +50,7 @@ export async function onRequestGet({request}){
       return response.active_symbols||[];
     });
     const candidates=all.filter(item=>isVolatility(item)&&getSymbol(item))
-      .sort((a,b)=>Number(/\\(1s\\)/i.test(getName(b)))-Number(/\\(1s\\)/i.test(getName(a))))
+      .sort((x,y)=>Number(getName(y).toLowerCase().includes("(1s)"))-Number(getName(x).toLowerCase().includes("(1s)")))
       .filter((item,index,array)=>array.findIndex(x=>family(x)===family(item))===index)
       .slice(0,MAX_CANDIDATES);
     const results=[];
