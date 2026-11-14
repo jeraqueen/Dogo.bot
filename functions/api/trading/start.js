@@ -1,7 +1,8 @@
-import { authorized, json } from "../../_lib/trading-engine.js";
+const API="https://dogo-bot-api.fx77.workers.dev";
 export async function onRequestPost({request}) {
-  if (!authorized(request, {DOGO_CONTROL_PIN: request.headers.get("x-dogo-pin")})) {
-    return json({ok:false,message:"Trading is not enabled in this Matches scanner preview."},403);
-  }
-  return json({ok:false,active:false,message:"Automatic trading is disabled in this preview. Use Start scanning to test market discovery and Matches signals."},409);
+  const pin=request.headers.get("x-dogo-pin")||"";
+  if(!pin) return Response.json({ok:false,message:"Enter your Dogo.bot control PIN."},{status:401});
+  const body=await request.json().catch(()=>({}));
+  const upstream=await fetch(API+"/api/trading/start",{method:"POST",headers:{"content-type":"application/json","x-dogo-pin":pin},body:JSON.stringify({stake:body.stake})});
+  return new Response(await upstream.text(),{status:upstream.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store"}});
 }
