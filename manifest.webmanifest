@@ -1,0 +1,14 @@
+{
+  "id": "/",
+  "name": "Dogo.bot — Trading Command Center",
+  "short_name": "Dogo.bot",
+  "description": "Deriv volatility market scanner and demo trading control center.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#080f1d",
+  "theme_color": "#080f1d",
+  "categories": ["finance", "utilities"],
+  "icons": [{"src": "/icons/dogo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
+}
