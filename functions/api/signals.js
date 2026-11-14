@@ -1,7 +1,7 @@
 import { openPublicSocket, derivRequest } from "../_lib/deriv-connect.js";
 
-const WINDOWS=[100,50,25,10], MIN_PERCENT=11.8, MAX_CANDIDATES=40;
-const ACTIVE_SYMBOLS_TTL=15*60, CONTRACTS_TTL=6*60*60, REQUEST_GAP_MS=300;
+const WINDOWS=[100,50,25,10], MIN_PERCENT=11.8, MAX_CANDIDATES=10;
+const ACTIVE_SYMBOLS_TTL=15*60, CONTRACTS_TTL=6*60*60, REQUEST_GAP_MS=1200;
 
 function quoteWithPipSize(price,pipSize){const decimals=Number.isFinite(pipSize)&&pipSize>0?Math.max(0,Math.min(10,Math.round(-Math.log10(pipSize)))):2;return Number(price).toFixed(decimals);}
 function lastDigit(quote){const s=String(quote??"").trim();if(!/^-?\d+(?:\.\d+)?$/.test(s))return null;const fraction=s.split(".")[1]||"";const digit=(fraction||s.replace("-","")).slice(-1);return /^\d$/.test(digit)?Number(digit):null;}
@@ -67,9 +67,9 @@ export async function onRequestGet({request}){
       }
     }
     results.sort((a,b)=>Number(b.status==="QUALIFYING")-Number(a.status==="QUALIFYING")||Number(b.topDigits?.[0]?.percent||0)-Number(a.topDigits?.[0]?.percent||0));
-    return Response.json({ok:true,strategy:"DIGITMATCH",threshold,windows:WINDOWS,marketsDiscovered:all.filter(isVolatility).length,marketsChecked:results.length,validMarkets:results.filter(x=>x.matchAvailable).length,qualifyingMarkets:results.filter(x=>x.status==="QUALIFYING").length,scannedAt:new Date().toISOString(),requestPolicy:{activeSymbolsCacheMinutes:15,contractsForCacheHours:6,minimumGapMs:REQUEST_GAP_MS,sequentialMarketChecks:true},results},{headers:{"cache-control":"no-store"}});
+    return Response.json({ok:true,strategy:"DIGITMATCH",threshold,windows:WINDOWS,marketsDiscovered:all.filter(isVolatility).length,marketsChecked:results.length,validMarkets:results.filter(x=>x.matchAvailable).length,qualifyingMarkets:results.filter(x=>x.status==="QUALIFYING").length,scannedAt:new Date().toISOString(),requestPolicy:{activeSymbolsCacheMinutes:15,contractsForCacheHours:6,minimumGapMs:REQUEST_GAP_MS,sequentialMarketChecks:true,maxMarkets:MAX_CANDIDATES,volatilityFamilies:[10,25,50,75,100],includeOneSecondVariants:true},results},{headers:{"cache-control":"no-store"}});
   }catch(error){
     const limited=isRateLimit(error);
-    return Response.json({ok:false,message:error?.message||"Market scan failed",rateLimited:limited,results:[]},{status:limited?429:502,headers:{"cache-control":"no-store"}});
+    return Response.json({ok:false,message:limited?"Deriv rate limit reached. Scanning paused automatically; wait before starting again.":(error?.message||"Market scan failed"),rateLimited:limited,retryAfterSeconds:limited?60:undefined,results:[]},{status:limited?429:502,headers:{"cache-control":"no-store","retry-after":limited?"60":"0"}});
   }finally{try{ws?.close();}catch{}}
 }
