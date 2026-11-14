@@ -12,7 +12,8 @@ async function demoSocket(env,accountId){if(!accountId){const b=await rest(env,"
 function ask(ws,p,id,timeout=12000){return new Promise((resolve,reject)=>{let settled=false;const clean=()=>{clearTimeout(timer);ws.removeEventListener("message",msg);ws.removeEventListener("close",closed);ws.removeEventListener("error",failed);};const done=(fn,v)=>{if(settled)return;settled=true;clean();fn(v);};const timer=setTimeout(()=>done(reject,Error("Deriv request timed out; purchase state must be reconciled before another buy.")),timeout);const msg=e=>{let d;try{d=JSON.parse(e.data);}catch{return;}if(d.req_id!==id)return;d.error?done(reject,Error("Deriv "+(d.error.code||"error")+": "+d.error.message)):done(resolve,d);};const closed=()=>done(reject,Error("Deriv demo socket closed."));const failed=()=>done(reject,Error("Deriv demo socket error."));ws.addEventListener("message",msg);ws.addEventListener("close",closed);ws.addEventListener("error",failed);try{ws.send(JSON.stringify({...p,req_id:id}));}catch(e){done(reject,e);}});}
 const decimals=p=>Number.isFinite(p)&&p>0?Math.max(0,Math.min(10,Math.round(-Math.log10(p)))):2;
 function distribution(prices,n,pip){const sample=prices.slice(-n);if(sample.length<n)return[];const counts=Array(10).fill(0);for(const price of sample){const fraction=Number(price).toFixed(decimals(pip)).split(".")[1]||"",digit=fraction.slice(-1);if(!/^\d$/.test(digit))return[];counts[Number(digit)]++;}return counts.map((count,digit)=>({digit,count,percent:+(count/n*100).toFixed(2)})).sort((a,b)=>b.count-a.count||a.digit-b.digit);}
-const isVol=name=>/volatility\s*(10|15|20|25|30|50|75|90|100)/i.test(String(name||""));
+const family=name=>String(name||"").match(/volatility\s*(10|25|50|75|100)/i)?.[1]||"";
+const isVol=name=>!!family(name);
 async function scanSignals(){
  const ws=await openSocket("wss://api.derivws.com/trading/v1/options/ws/public","public");
  try{
