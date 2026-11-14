@@ -61,24 +61,29 @@ export class DogoTrader{
   ws.addEventListener("message",e=>{this.handleMarketMessage(e.data).catch(err=>this.feedFailure(err));});
   ws.addEventListener("close",()=>{if(this.publicWs===ws){this.publicWs=null;this.feedReady=false;this.feedFailure(new Error("Deriv live tick stream disconnected."));}});
   ws.addEventListener("error",()=>{this.feedFailure(new Error("Deriv live tick stream reported a socket error."));});
-  const active=await ask(ws,{active_symbols:"brief"},this.reqId++);
-  const family=n=>String(n||"").match(/volatility\s*(10|25|50|75|100)/i)?.[1]||"";
-  const nameOf=x=>x.display_name||x.underlying_symbol_name||x.symbol||x.underlying_symbol||"Volatility market";
-  const symbols=(active.active_symbols||[])
-   .filter(x=>family(nameOf(x))&&(x.symbol||x.underlying_symbol))
-   .sort((a,b)=>Number(String(nameOf(b)).toLowerCase().includes("(1s)"))-Number(String(nameOf(a)).toLowerCase().includes("(1s)")))
-   .filter((x,i,a)=>a.findIndex(y=>family(nameOf(y))===family(nameOf(x)))===i).slice(0,5);
-  if(!symbols.length)throw new Error("Deriv returned no supported Volatility 10/25/50/75/100 markets.");
+  // Use fixed Deriv 1-second Volatility symbols; no symbol-directory request is needed.
+  const symbols=[
+   {symbol:"1HZ10V",display_name:"Volatility 10 (1s) Index",pip_size:0.01},
+   {symbol:"1HZ25V",display_name:"Volatility 25 (1s) Index",pip_size:0.01},
+   {symbol:"1HZ50V",display_name:"Volatility 50 (1s) Index",pip_size:0.01},
+   {symbol:"1HZ75V",display_name:"Volatility 75 (1s) Index",pip_size:0.01},
+   {symbol:"1HZ100V",display_name:"Volatility 100 (1s) Index",pip_size:0.01}
+  ];
+  let failedMarkets=[];
   for(const m of symbols){
-   const symbol=m.symbol||m.underlying_symbol,name=nameOf(m),pip=Number(m.pip_size||m.pip||0.01);
+   const symbol=m.symbol,name=m.display_name,pip=Number(m.pip_size||0.01);
    this.marketMeta[symbol]={symbol,name,pip};
-   const h=await ask(ws,{ticks_history:symbol,count:100,end:"latest",style:"ticks",subscribe:1},this.reqId++);
-   const prices=h.history?.prices||[];
-   this.liveBuffers[symbol]=prices.slice(-100).map(q=>({quote:String(q),digit:this.digitOf(q,pip)})).filter(x=>x.digit!==null);
-   if(h.subscription?.id)this.subscriptionSymbols[String(h.subscription.id)]=symbol;
-   this.liveMarkets.push(this.snapshot(symbol,null));
-   await sleep(350);
+   try{
+    const h=await ask(ws,{ticks_history:symbol,count:100,end:"latest",style:"ticks",subscribe:1},this.reqId++);
+    const prices=h.history?.prices||[];
+    this.liveBuffers[symbol]=prices.slice(-100).map(q=>({quote:String(q),digit:this.digitOf(q,Number(h.pip_size||pip))})).filter(x=>x.digit!==null);
+    if(h.subscription?.id)this.subscriptionSymbols[String(h.subscription.id)]=symbol;
+    this.liveMarkets.push(this.snapshot(symbol,null));
+   }catch(err){failedMarkets.push(name+": "+(err?.message||"unavailable"));}
+   await sleep(500);
   }
+  if(!this.liveMarkets.length)throw new Error("No 1-second Volatility market stream could be started. "+failedMarkets.join(" | "));
+  if(failedMarkets.length){const state=await this.get();event(state,"Some markets were unavailable: "+failedMarkets.join(" | "),"warning");await this.put(state);}
   this.feedReady=true;
   const s=await this.get();s.feedStatus="LIVE";s.feedError=null;s.marketCount=symbols.length;
   event(s,"Live tick stream connected · "+symbols.length+" Volatility markets · one subscription per market","success");
