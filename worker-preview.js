@@ -225,6 +225,7 @@ export class DogoTrader{
      s.netProfit=+(s.netProfit+profit).toFixed(2);s.transactions=[tx,...(s.transactions||[])].slice(0,100);s.openContract=null;s.lastSettlement=tx;s.lastError=null;
      event(s,"Contract "+tx.result+" · "+tx.symbol+" · digit #"+tx.digit+" · net "+(profit>=0?"+":"")+"$"+profit.toFixed(2),won?"success":"warning",{contractId:tx.contractId});
      await this.put(s);await this.persistMarkets(true);
+     const monitored=this.liveMarkets.map(x=>x.symbol);if(won&&monitored.length&&monitored.every(x=>Number(s.marketWins[x]||0)>=2)){s.marketWins={};s.cycleNumber=(s.cycleNumber||1)+1;event(s,"All monitored markets completed two settled wins · rotation cycle "+s.cycleNumber+" restarted","info");await this.put(s);await this.persistMarkets(true);}
      if(!s.active){await this.ctx.storage.deleteAlarm();this.closeDemo();return;}
      await this.ctx.storage.setAlarm(Date.now()+30000);return;
     }
