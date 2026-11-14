@@ -181,7 +181,7 @@ export class DogoTrader{
    await this.put(s);await this.ctx.storage.setAlarm(Date.now()+1200);
   }catch(e){
    const s=await this.get();s.lastError=e?.message||"Trade attempt failed";event(s,"MATCHES entry rejected · "+s.lastError,"error");
-   if(/429|rate.?limit|too many requests/i.test(s.lastError))s.backoffMs=Math.min(Math.max(Number(s.backoffMs||15000)*2,30000),300000);
+   if(/429|rate.?limit|too many requests/i.test(s.lastError)){s.backoffMs=Math.min(Math.max(Number(s.backoffMs||15000)*2,30000),300000);this.lastAttemptAt=Date.now()+15000;}else this.lastAttemptAt=Date.now()+4000;
    await this.put(s);
   }finally{this.tradeBusy=false;}
  }
