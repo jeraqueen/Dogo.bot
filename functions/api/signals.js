@@ -1,7 +1,7 @@
 import { openPublicSocket, derivRequest } from "../_lib/deriv-connect.js";
 
 const WINDOWS=[100,50,25,10], MIN_PERCENT=11.8, MAX_CANDIDATES=5;
-const ACTIVE_SYMBOLS_TTL=60*60, REQUEST_GAP_MS=2500, RATE_LIMIT_COOLDOWN_MS=5*60*1000;
+const ACTIVE_SYMBOLS_TTL=60*60, REQUEST_GAP_MS=10000, RATE_LIMIT_COOLDOWN_MS=15*60*1000;
 
 function quoteWithPipSize(price,pipSize){const decimals=Number.isFinite(pipSize)&&pipSize>0?Math.max(0,Math.min(10,Math.round(-Math.log10(pipSize)))):2;return Number(price).toFixed(decimals);}
 function lastDigit(quote){const s=String(quote??"").trim();if(!/^-?\d+(?:\.\d+)?$/.test(s))return null;const fraction=s.split(".")[1]||"";const digit=(fraction||s.replace("-","")).slice(-1);return /^\d$/.test(digit)?Number(digit):null;}
