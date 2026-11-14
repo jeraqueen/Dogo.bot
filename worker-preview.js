@@ -18,7 +18,7 @@ async function scanSignals(){
  const ws=await openSocket("wss://api.derivws.com/trading/v1/options/ws/public","public");
  try{
   let id=1,last=0;
-  const send=async p=>{const wait=Math.max(0,2500-(Date.now()-last));if(wait)await sleep(wait);last=Date.now();return ask(ws,p,id++);};
+  const send=async p=>{const wait=Math.max(0,10000-(Date.now()-last));if(wait)await sleep(wait);last=Date.now();return ask(ws,p,id++);};
   const a=await send({active_symbols:"brief"});
   const markets=(a.active_symbols||[])
    .filter(x=>isVol(x.display_name||x.underlying_symbol_name||x.symbol)&&x.symbol)
