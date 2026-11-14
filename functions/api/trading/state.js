@@ -1,4 +1,4 @@
-const API="https://dogo-bot-api.fx77.workers.dev";
+const API="https://dogo-bot-api-preview.fx77.workers.dev";
 export async function onRequestGet({request}) {
   const pin=request.headers.get("x-dogo-pin")||"";
   if(!pin) return Response.json({ok:false,message:"Enter your Dogo.bot control PIN."},{status:401});
