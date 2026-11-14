@@ -195,7 +195,7 @@ export class DogoTrader{
    const b=await req.json().catch(()=>({})),stake=Number(b.stake),s=await this.get();
    if(!Number.isFinite(stake)||stake<.35||stake>1000)return json({ok:false,message:"Stake must be between $0.35 and $1,000."},400);
    if(s.purchasePending||s.purchaseUncertain)return json({ok:false,message:"A previous purchase has an uncertain outcome. Reconcile it before restarting; no duplicate purchase will be attempted."},409);
-   if(s.active)return json({ok:true,active:true,message:"Live digit stream is already running."});
+   if(s.active&&this.publicWs&&this.publicWs.readyState===1&&this.feedReady)return json({ok:true,active:true,message:"Live digit stream is already running."});
    Object.assign(s,{ok:true,active:true,mode:"DEMO",stake:+stake.toFixed(2),lastError:null,feedStatus:"CONNECTING",feedError:null,marketWins:s.marketWins||{}});
    event(s,"Starting live digit monitor · green-touch DIGITMATCH · demo only · stake $"+stake.toFixed(2),"info");await this.put(s);
    try{await this.startMarketFeed();await this.ctx.storage.setAlarm(Date.now()+30000);return json({ok:true,active:true,message:"Live digit stream connected. The bot will open a one-tick MATCHES contract when the green cursor touches a qualifying digit."});}
