@@ -54,6 +54,7 @@ export class DogoTrader{
  closePublic(){try{this.publicWs?.close();}catch{}this.publicWs=null;this.feedReady=false;}
  async startMarketFeed(){
   if(this.publicWs&&this.publicWs.readyState===1&&this.feedReady)return;
+  if(this.publicWs)this.closePublic();
   this.feedReady=false;
   const ws=await openSocket("wss://api.derivws.com/trading/v1/options/ws/public","public live tick stream");
   this.publicWs=ws;this.subscriptionSymbols={};this.liveBuffers={};this.marketMeta={};this.liveMarkets=[];
