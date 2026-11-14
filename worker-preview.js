@@ -73,7 +73,7 @@ export class DogoTrader{
    this.marketMeta[symbol]={symbol,name,pip};
    const h=await ask(ws,{ticks_history:symbol,count:100,end:"latest",style:"ticks",subscribe:1},this.reqId++);
    const prices=h.history?.prices||[];
-   this.liveBuffers[symbol]=prices.slice(-100).map(q=>({quote:String(q),digit:lastDigit(q,pip)})).filter(x=>x.digit!==null);
+   this.liveBuffers[symbol]=prices.slice(-100).map(q=>({quote:String(q),digit:this.digitOf(q,pip)})).filter(x=>x.digit!==null);
    if(h.subscription?.id)this.subscriptionSymbols[String(h.subscription.id)]=symbol;
    this.liveMarkets.push(this.snapshot(symbol,null));
    await sleep(350);
