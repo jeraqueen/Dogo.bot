@@ -73,7 +73,7 @@ export class DogoTrader{
   return {symbol,name:meta.name,tickCount:buf.length,lastQuote:buf.length?buf[buf.length-1].quote:null,cursorDigit:cursorDigit===undefined?(buf.length?buf[buf.length-1].digit:null):cursorDigit,greenDigit:green.digit,greenPercent:green.percent,redDigit:red.digit,redPercent:red.percent,redNotRising,separated,qualifies,bars,windows,marketWins:0,updatedAt:previewNow()};
  }
  async previewPersistMarkets(force=false){
-  if(!force&&Date.now()-this.previewLastPersist<900)return;this.previewLastPersist=Date.now();
+  if(!force&&Date.now()-this.previewLastPersist<30000)return;this.previewLastPersist=Date.now();
   const s=await this.previewGet(),wins=s.marketWins||{};this.previewMarkets=this.previewMarkets.map(m=>({...m,marketWins:Number(wins[m.symbol]||0)}));
   await this.ctx.storage.put("liveMarkets",this.previewMarkets);
  }
@@ -170,89 +170,4 @@ export class DogoTrader{
  async previewFetch(req){
   const p=new URL(req.url).pathname;
   if(req.method==="GET"&&p==="/state"){const s=await this.previewGet();s.liveMarkets=this.previewMarkets.length?this.previewMarkets:((await this.ctx.storage.get("liveMarkets"))||[]);return previewJson(s);}
-  if(req.method==="POST"&&p==="/start"){
-   const b=await req.json().catch(()=>({})),stake=Number(b.stake),s=await this.previewGet();
-   if(!Number.isFinite(stake)||stake<.35||stake>1000)return previewJson({ok:false,message:"Stake must be between $0.35 and $1,000."},400);
-   if(s.purchasePending||s.purchaseUncertain)return previewJson({ok:false,message:"A previous purchase has an uncertain outcome. Reconcile it before restarting; no duplicate purchase will be attempted."},409);
-   if(this.previewStartBusy)return previewJson({ok:true,active:true,retrying:true,message:"The demo connection is already starting. Please wait; no second connection will be opened."},202);
-   if(s.active&&this.previewPublicWs&&this.previewPublicWs.readyState===1&&this.previewFeedReady)return previewJson({ok:true,active:true,message:"Live digit stream is already running."});
-   const wait=this.previewNextConnectAt-Date.now();
-   if(s.active&&wait>0)return previewJson({ok:true,active:true,retrying:true,retryInMs:wait,message:"Deriv connection cooldown is active. The bot will retry automatically in "+Math.ceil(wait/1000)+" seconds."},202);
-   this.previewStartBusy=true;
-   try{
-    Object.assign(s,{ok:true,active:true,mode:"DEMO",stake:+stake.toFixed(2),lastError:null,feedStatus:"CONNECTING",feedError:null,marketWins:s.marketWins||{}});
-    previewEvent(s,"Starting live digit monitor · green-touch MATCHES · demo only · stake $"+stake.toFixed(2),"info");await this.previewPut(s);
-    try{await this.previewStartMarketFeed();await this.ctx.storage.setAlarm(Date.now()+30000);return previewJson({ok:true,active:true,message:"Live digit stream connected. The bot will open a one-tick MATCHES contract when the green cursor touches a qualifying digit."});}
-    catch(e){
-     const failed=await this.previewGet();failed.feedError=e?.message||"Could not start live market feed";failed.lastError=failed.feedError;
-     if(previewIsRateLimit(e)){failed.active=true;failed.feedStatus="RECONNECTING";failed.backoffMs=Math.min(Math.max(Number(failed.backoffMs||7500)*2,15000),300000);this.previewNextConnectAt=Date.now()+failed.backoffMs;previewEvent(failed,"Deriv rate limit: "+failed.feedError+" · retrying in "+Math.ceil(failed.backoffMs/1000)+"s","warning");await this.previewPut(failed);this.previewCloseConnection();await this.ctx.storage.setAlarm(Date.now()+failed.backoffMs+500);return previewJson({ok:true,active:true,retrying:true,retryInMs:failed.backoffMs,message:"Deriv temporarily rate-limited the demo WebSocket. The bot will retry automatically; no contract has been purchased."},202);}
-     failed.active=false;failed.feedStatus="ERROR";previewEvent(failed,"Live monitor failed: "+failed.feedError,"error");await this.previewPut(failed);this.previewCloseConnection();return previewJson({ok:false,active:false,message:failed.feedError},502);
-    }
-   }finally{this.previewStartBusy=false;}
-  }if(req.method==="POST"&&p==="/stop"){
-   const s=await this.previewGet();s.active=false;previewEvent(s,s.openContract?"Stop requested · no new purchases; current demo contract will settle.":"Live scanner and demo bot stopped.","warning");await this.previewPut(s);this.previewClosePublic();
-   if(s.openContract)await this.ctx.storage.setAlarm(Date.now()+1000);else if(s.purchasePending)await this.ctx.storage.setAlarm(Date.now()+15000);else{await this.ctx.storage.deleteAlarm();this.previewCloseConnection();}
-   return previewJson({ok:true,active:false,settlingOpenContract:!!s.openContract,message:s.openContract?"Stop received. Current demo contract will settle; no new buys.":"Live monitor stopped. No new buys."});
-  }
-  return previewJson({ok:false,message:"Not found"},404);
- }
- async previewAlarm(){
-  if(this.busy){await this.ctx.storage.setAlarm(Date.now()+1500);return;}this.busy=true;
-  try{
-   let s=await this.previewGet();
-   if(s.purchasePending){s.active=false;s.purchaseUncertain=true;s.lastError="Purchase outcome uncertain after interruption. Bot paused to prevent a duplicate buy; reconcile Deriv transactions before restarting.";previewEvent(s,s.lastError,"error");await this.previewPut(s);await this.ctx.storage.deleteAlarm();this.previewClosePublic();this.previewCloseConnection();return;}
-   if(s.openContract){
-    const ws=await this.previewConnection(),r=await ask(ws,{proposal_open_contract:1,contract_id:Number(s.openContract.contractId)},this.previewReqId++),c=r.proposal_open_contract||{};
-    if(c.is_sold===1||c.is_sold===true||c.status==="won"||c.status==="lost"){
-     const profit=Number(c.profit||0),won=c.status==="won"||profit>0,tx={contractId:s.openContract.contractId,symbol:s.openContract.symbol,name:s.openContract.name,digit:s.openContract.digit,stake:Number(s.openContract.stake),payout:Number(c.payout||0),profit,result:won?"WON":"LOST",settledAt:previewNow()};
-     if(won){s.wins++;s.grossProfit=+(s.grossProfit+Math.max(0,profit)).toFixed(2);s.marketWins[tx.symbol]=Number(s.marketWins[tx.symbol]||0)+1;if(s.marketWins[tx.symbol]>=2){s.currentMarket=null;event(s,"Market rotation: "+tx.symbol+" reached two settled wins · moving to the next market","success");}}else s.losses++;
-     s.netProfit=+(s.netProfit+profit).toFixed(2);s.transactions=[tx,...(s.transactions||[])].slice(0,100);s.openContract=null;s.lastSettlement=tx;s.lastError=null;
-     previewEvent(s,"Contract "+tx.result+" · "+tx.symbol+" · digit #"+tx.digit+" · net "+(profit>=0?"+":"")+"$"+profit.toFixed(2),won?"success":"warning",{contractId:tx.contractId});
-     await this.previewPut(s);await this.previewPersistMarkets(true);
-     const monitored=this.previewMarkets.map(x=>x.symbol);if(monitored.length&&monitored.every(x=>Number(s.marketWins[x]||0)>=2)){s.marketWins={};s.currentMarket=monitored[0]||null;s.cycleNumber=(s.cycleNumber||1)+1;previewEvent(s,"All monitored markets reached two settled wins · rotation cycle "+s.cycleNumber+" restarted","info");await this.previewPut(s);await this.previewPersistMarkets(true);}
-     if(!s.active){await this.ctx.storage.deleteAlarm();this.previewCloseConnection();return;}
-     await this.ctx.storage.setAlarm(Date.now()+30000);return;
-    }
-    s.openContract.status=c.status||"OPEN";s.openContract.currentProfit=Number(c.profit||0);await this.previewPut(s);await this.ctx.storage.setAlarm(Date.now()+1800);return;
-   }
-   s=await this.previewGet();if(!s.active){await this.ctx.storage.deleteAlarm();this.previewClosePublic();this.previewCloseConnection();return;}
-   if(!this.previewPublicWs||this.previewPublicWs.readyState!==1||!this.previewFeedReady){
-    try{await this.previewStartMarketFeed();s=await this.previewGet();s.feedStatus="LIVE";s.feedError=null;await this.previewPut(s);}
-    catch(e){s=await this.previewGet();s.feedStatus="RECONNECTING";s.feedError=e?.message||"Live feed reconnect failed";s.lastError=s.feedError;previewEvent(s,"Live feed reconnect: "+s.feedError,"error");await this.previewPut(s);await this.ctx.storage.setAlarm(Date.now()+15000);return;}
-   }
-   await this.ctx.storage.setAlarm(Date.now()+30000);
-  }catch(e){
-   const s=await this.previewGet();s.lastError=e?.message||"Trading engine error";previewEvent(s,"Trading engine: "+s.lastError,"error");
-   if(s.purchasePending){s.active=false;s.purchaseUncertain=true;s.lastError="Purchase outcome uncertain after interruption. Check Deriv demo transactions before restarting.";await this.previewPut(s);await this.ctx.storage.deleteAlarm();this.previewClosePublic();this.previewCloseConnection();}
-   else{if(/429|ratelimit|rate limit/i.test(s.lastError)){s.backoffMs=Math.min(Math.max(Number(s.backoffMs||7500)*2,15000),300000);this.previewNextConnectAt=Date.now()+s.backoffMs;await this.previewPut(s);this.previewCloseConnection();if(s.active||s.openContract)await this.ctx.storage.setAlarm(Date.now()+s.backoffMs+500);else await this.ctx.storage.deleteAlarm();}else{await this.previewPut(s);if(s.active||s.openContract)await this.ctx.storage.setAlarm(Date.now()+10000);else{await this.ctx.storage.deleteAlarm();this.previewClosePublic();this.previewCloseConnection();}}}
-  }finally{this.busy=false;}
- }
- async fetch(r){if(this.isPreview)return this.previewFetch(r);const p=new URL(r.url).pathname;if(r.method==="GET"&&p==="/state")return out(await this.get());if(r.method==="POST"&&p==="/start"){const b=await r.json().catch(()=>({})),stake=Number(b.stake);if(!Number.isFinite(stake)||stake<.35||stake>1000)return out({ok:false,message:"Stake must be between $0.35 and $1,000."},400);const s=await this.get();if(s.purchasePending||s.purchaseUncertain)return out({ok:false,message:"A previous purchase has an uncertain outcome. Reconcile the Deriv demo transaction before restarting; duplicate purchases are blocked."},409);Object.assign(s,{active:true,mode:"DEMO",stake:+stake.toFixed(2),lastError:null,nextScanAt:0});await this.put(s);await this.ctx.storage.setAlarm(Date.now()+100);return out({ok:true,active:true,message:"Demo bot loaded. DIGITMATCH only; one open contract at a time."});}if(r.method==="POST"&&p==="/stop"){const s=await this.get();s.active=false;s.stopRequestedAt=new Date().toISOString();if(s.purchasePending?.phase==="READY")s.purchasePending=null;await this.put(s);if(s.openContract||s.purchasePending)await this.ctx.storage.setAlarm(Date.now()+1000);else{await this.ctx.storage.deleteAlarm();this.closeConnection();}return out({ok:true,active:false,settlingOpenContract:!!s.openContract,message:s.openContract?"Stop received. No new buys; current demo contract will settle.":s.purchasePending?"Stop received. Checking the pending purchase safely.":"Stopped. No background alarm remains."});}return out({ok:false,message:"Not found"},404);}
- async alarm(){if(this.isPreview)return this.previewAlarm();const legacyState=await this.get();if(legacyState.active){legacyState.active=false;legacyState.lastError="Legacy scanner disabled; the unified live-feed engine is now used.";event(legacyState,legacyState.lastError,"warning");await this.put(legacyState);}if(!legacyState.openContract&&!legacyState.purchasePending){await this.ctx.storage.deleteAlarm();this.closeConnection();return;}if(this.busy){await this.ctx.storage.setAlarm(Date.now()+1500);return;}this.busy=true;let d=null;try{let s=await this.get();if(s.purchasePending){if(s.purchasePending.phase==="READY"){s.purchasePending=null;await this.put(s);}else{s.active=false;s.purchaseUncertain=true;s.lastError="Purchase outcome uncertain after interruption. Bot paused to prevent a duplicate buy; check Deriv demo transactions before restarting.";event(s,s.lastError,"error");await this.put(s);await this.ctx.storage.deleteAlarm();this.closeConnection();return;}}if(!s.active&&!s.openContract){await this.ctx.storage.deleteAlarm();this.closeConnection();return;}d=await this.connection();let id=10;if(s.openContract){const r=await ask(d.ws,{proposal_open_contract:1,contract_id:Number(s.openContract.contractId)},id++),c=r.proposal_open_contract||{};if(c.is_sold===1||c.is_sold===true||c.status==="won"||c.status==="lost"){const profit=Number(c.profit||0),won=c.status==="won"||profit>0,tx={contractId:s.openContract.contractId,symbol:s.openContract.symbol,name:s.openContract.name,digit:s.openContract.digit,stake:s.openContract.stake,payout:Number(c.payout||0),profit,result:won?"WON":"LOST",settledAt:new Date().toISOString()};if(won){s.wins++;s.grossProfit=+(s.grossProfit+Math.max(0,profit)).toFixed(2);s.marketWins[tx.symbol]=Number(s.marketWins[tx.symbol]||0)+1;if(s.marketWins[tx.symbol]>=2){s.currentMarket=null;event(s,"Market rotation: "+tx.symbol+" reached two settled wins · moving to the next market","success");}}else s.losses++;s.netProfit=+(s.netProfit+profit).toFixed(2);s.transactions=[tx,...s.transactions].slice(0,100);s.openContract=null;s.lastSettlement=tx;await this.put(s);if(!s.active){await this.ctx.storage.deleteAlarm();return;}}else{s.openContract.status=c.status||"OPEN";s.openContract.currentProfit=Number(c.profit||0);await this.put(s);await this.ctx.storage.setAlarm(Date.now()+2500);return;}}
- s=await this.get();if(!s.active){await this.ctx.storage.deleteAlarm();this.closeConnection();return;}if(!s.scannedAt||Date.now()-Date.parse(s.scannedAt)>60000||!s.signals.length){s.signals=await scan(d.ws);s.scannedAt=new Date().toISOString();s.lastError=null;await this.put(s);}s=await this.get();let choices=s.signals.filter(x=>Number(s.marketWins[x.symbol]||0)<2);if(s.currentMarket&&Number(s.marketWins[s.currentMarket]||0)<2){choices=choices.filter(x=>x.symbol===s.currentMarket);}else if(s.currentMarket){s.currentMarket=null;await this.put(s);}if(!choices.length&&s.signals.length&&s.signals.every(x=>Number(s.marketWins[x.symbol]||0)>=2)){s.marketWins={};s.currentMarket=null;s.cycleNumber++;choices=s.signals;}if(!choices.length){await this.ctx.storage.setAlarm(Date.now()+60000);return;}const m=choices[0];s=await this.get();if(!s.active||s.openContract){await this.ctx.storage.deleteAlarm();return;}const p=await ask(d.ws,{proposal:1,amount:s.stake,basis:"stake",contract_type:"DIGITMATCH",currency:"USD",duration:1,duration_unit:"t",underlying_symbol:m.symbol,barrier:String(m.digit)},id++),q=p.proposal;if(!q?.id||!Number.isFinite(Number(q.ask_price)))throw Error("Deriv did not return a valid DIGITMATCH proposal.");s=await this.get();if(!s.active||s.openContract){await this.ctx.storage.deleteAlarm();return;}s.purchasePending={phase:"READY",symbol:m.symbol,digit:m.digit,proposalId:q.id,startedAt:new Date().toISOString()};await this.put(s);s=await this.get();if(!s.active){s.purchasePending=null;await this.put(s);return;}s.purchasePending.phase="SENT";s.purchasePending.sentAt=new Date().toISOString();await this.put(s);let buyResponse;try{buyResponse=await ask(d.ws,{buy:q.id,price:Number(q.ask_price)},id++);}catch(e){s=await this.get();if(/timed out|closed the socket|socket error/i.test(e.message)){s.active=false;s.purchaseUncertain=true;s.lastError="Buy response uncertain: "+e.message+" Bot paused to prevent a duplicate purchase. Check Deriv demo transactions.";event(s,s.lastError,"error");await this.put(s);await this.ctx.storage.deleteAlarm();this.closeConnection();return;}s.purchasePending=null;await this.put(s);throw e;}const b=buyResponse.buy;if(!b?.contract_id){s=await this.get();s.active=false;s.purchaseUncertain=true;s.lastError="Deriv did not return a contract ID after buy. Bot paused to prevent a duplicate purchase; check Deriv demo transactions.";event(s,s.lastError,"error");await this.put(s);await this.ctx.storage.deleteAlarm();this.closeConnection();return;}s=await this.get();s.purchasePending=null;s.purchaseUncertain=false;s.contractsOpened++;s.openContract={contractId:String(b.contract_id),symbol:m.symbol,name:m.name,digit:m.digit,stake:Number(b.buy_price||s.stake),boughtAt:new Date().toISOString(),status:"OPEN",currentProfit:0};s.currentMarket=m.symbol;s.lastError=null;await this.put(s);await this.ctx.storage.setAlarm(Date.now()+2500);
- }catch(e){const s=await this.get();s.lastError=e?.message||"Trading engine error";await this.put(s);if(/429|ratelimit|rate limit/i.test(s.lastError)){s.backoffMs=Math.min(Math.max(Number(s.backoffMs||7500)*2,15000),300000);await this.put(s);if(s.active||s.openContract)await this.ctx.storage.setAlarm(Date.now()+s.backoffMs);else await this.ctx.storage.deleteAlarm();}else if(s.active||s.openContract)await this.ctx.storage.setAlarm(Date.now()+10000);else{await this.ctx.storage.deleteAlarm();this.closeConnection();}}finally{this.busy=false;}}
-}
-export default{async fetch(req,env){const origin=req.headers.get("Origin")||"",h={"Access-Control-Allow-Origin":ORIGINS.has(origin)?origin:"https://matches-auto-market-scanner.dogo-bot.pages.dev","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, X-Dogo-Pin","Vary":"Origin","Cache-Control":"no-store"};if(req.method==="OPTIONS")return new Response(null,{status:204,headers:h});const p=new URL(req.url).pathname;if(p==="/health")return out({ok:true,service:"Dogo.bot",token_configured:!!env.DERIV_API_TOKEN,trading_enabled:true,mode:"DEMO_ONLY"},200,h);if(p==="/api/status"){try{const b=await rest(env,"/trading/v1/options/accounts"),a=b.data||[];return out({ok:true,connected:true,account_count:a.length,accounts:a.filter(x=>String(x.account_type||"").toLowerCase()==="demo"||x.is_virtual===true||String(x.account_id||x.loginid||"").startsWith("VRTC")).map(x=>({account_id:x.account_id||x.id,loginid:x.loginid,account_type:"demo",currency:x.currency})),message:"Authenticated. Demo-only trading."},200,h);}catch(e){return out({ok:false,connected:false,error:e.message},502,h);}}
- if(p.startsWith("/api/preview/trading/")||p.startsWith("/api/trading/")){
-  if(!eq(env.DOGO_CONTROL_PIN||"",req.headers.get("X-Dogo-Pin")||""))return out({ok:false,message:"Control PIN is incorrect or not configured."},401,h);
-  const prefix=p.startsWith("/api/preview/trading/")?"/api/preview/trading":"/api/trading",path=p.slice(prefix.length);
-  const liveStub=env.TRADER.get(env.TRADER.idFromName("dogo-preview-main"));
-  const legacyStub=env.TRADER.get(env.TRADER.idFromName("dogo-main"));
-  if(path==="/state"&&req.method==="GET")return liveStub.fetch("https://trader/state");
-  if(path==="/start"&&req.method==="POST"){
-   await legacyStub.fetch(new Request("https://trader/stop",{method:"POST"}));
-   const legacyResponse=await legacyStub.fetch("https://trader/state"),legacy=await legacyResponse.json().catch(()=>({}));
-   if(legacy.openContract||legacy.purchasePending||legacy.purchaseUncertain){
-    const reason=legacy.openContract?"A previous demo contract ("+String(legacy.openContract.symbol||"unknown market")+") is still settling. Wait for it to finish before starting the unified engine.":"A previous demo purchase needs reconciliation. Check Deriv demo transactions before restarting; no new contract has been placed.";
-    return out({ok:false,active:false,message:reason},409,h);
-   }
-   return liveStub.fetch(new Request("https://trader/start",{method:"POST",headers:{"Content-Type":"application/json"},body:await req.text()}));
-  }
-  if(path==="/stop"&&req.method==="POST"){
-   const result=await liveStub.fetch(new Request("https://trader/stop",{method:"POST"}));
-   await legacyStub.fetch(new Request("https://trader/stop",{method:"POST"}));
-   return result;
-  }
-  return out({ok:false,message:"Not found"},404,h);
- }
- return out({ok:false,error:"Not found"},404,h);}};
+  i --- TRUNCATED --- 41,684 chars
