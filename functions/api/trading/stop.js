@@ -1,7 +1,7 @@
-import { authorized, json } from "../../_lib/trading-engine.js";
-export async function onRequestPost({request,env}) {
-  if(!authorized(request,env)) return json({ok:false,message:"Enter your Dogo.bot control PIN first."},401);
-  if(!env.BOT_DB) return json({ok:false,message:"Trading database is not configured."},503);
-  await env.BOT_DB.prepare("UPDATE cycle_state SET active=0,updated_at=? WHERE id=1").bind(new Date().toISOString()).run();
-  return json({ok:true,active:false,message:"Demo trading stopped. Existing open contracts will still be tracked to settlement."});
+const API="https://dogo-bot-api.fx77.workers.dev";
+export async function onRequestPost({request}) {
+  const pin=request.headers.get("x-dogo-pin")||"";
+  if(!pin) return Response.json({ok:false,message:"Enter your Dogo.bot control PIN."},{status:401});
+  const upstream=await fetch(API+"/api/trading/stop",{method:"POST",headers:{"x-dogo-pin":pin}});
+  return new Response(await upstream.text(),{status:upstream.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store"}});
 }
