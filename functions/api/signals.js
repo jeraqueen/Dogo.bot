@@ -1,7 +1,7 @@
 import { openPublicSocket, derivRequest } from "../_lib/deriv-connect.js";
 
-const WINDOWS=[100,50,25,10], MIN_PERCENT=11.8, MAX_CANDIDATES=10;
-const ACTIVE_SYMBOLS_TTL=15*60, CONTRACTS_TTL=6*60*60, REQUEST_GAP_MS=1200;
+const WINDOWS=[100,50,25,10], MIN_PERCENT=11.8, MAX_CANDIDATES=5;
+const ACTIVE_SYMBOLS_TTL=60*60, REQUEST_GAP_MS=2500, RATE_LIMIT_COOLDOWN_MS=5*60*1000;
 
 function quoteWithPipSize(price,pipSize){const decimals=Number.isFinite(pipSize)&&pipSize>0?Math.max(0,Math.min(10,Math.round(-Math.log10(pipSize)))):2;return Number(price).toFixed(decimals);}
 function lastDigit(quote){const s=String(quote??"").trim();if(!/^-?\d+(?:\.\d+)?$/.test(s))return null;const fraction=s.split(".")[1]||"";const digit=(fraction||s.replace("-","")).slice(-1);return /^\d$/.test(digit)?Number(digit):null;}
@@ -31,6 +31,9 @@ function isRateLimit(error){return /ratelimit|rate.?limit|too many requests|\b42
 export async function onRequestGet({request}){
   const url=new URL(request.url),threshold=Number(url.searchParams.get("threshold")||MIN_PERCENT);
   if(!Number.isFinite(threshold)||threshold<MIN_PERCENT||threshold>100)return Response.json({ok:false,message:"Frequency threshold must be between 11.8 and 100."},{status:400});
+  const cache=globalThis.caches?.default;
+  const pauseKey=new Request("https://dogo-cache.invalid/deriv/rate-limit-pause-v1");
+  if(cache){try{const pause=await cache.match(pauseKey);if(pause){const data=await pause.json();const remaining=Math.max(1,Math.ceil((Number(data.until)||0-Date.now())/1000));return Response.json({ok:false,message:"Deriv rate limit cooldown is active. Please wait before scanning again.",rateLimited:true,retryAfterSeconds:remaining,results:[]},{status:429,headers:{"cache-control":"no-store","retry-after":String(remaining)}});}}catch{}}
   let ws;
   try{
     ws=await openPublicSocket();
@@ -45,31 +48,29 @@ export async function onRequestGet({request}){
       const response=await paced({active_symbols:"brief"});
       return response.active_symbols||[];
     });
-    const candidates=all.filter(item=>isVolatility(item)&&getSymbol(item)).slice(0,MAX_CANDIDATES);
+    const candidates=all.filter(item=>isVolatility(item)&&getSymbol(item))
+      .sort((a,b)=>Number(/\\(1s\\)/i.test(getName(b)))-Number(/\\(1s\\)/i.test(getName(a))))
+      .filter((item,index,array)=>array.findIndex(x=>/^volatility\\s*(10|25|50|75|100)/i.test(getName(x))&&getName(x).match(/volatility\\s*(10|25|50|75|100)/i)?.[1]===getName(item).match(/volatility\\s*(10|25|50|75|100)/i)?.[1])===index)
+      .slice(0,MAX_CANDIDATES);
     const results=[];
     for(const item of candidates){
       const symbol=getSymbol(item),name=getName(item);
       try{
-        const available=await cachedRequest("contracts-for-"+symbol,CONTRACTS_TTL,async()=>{
-          const contracts=await paced({contracts_for:symbol});
-          return contracts.contracts_for?.available||[];
-        });
-        if(!available.some(c=>c.contract_type==="DIGITMATCH")){
-          results.push({name,symbol,active:true,matchAvailable:false,status:"MATCHES_NOT_OFFERED"});
-          continue;
-        }
+        // Volatility 10/25/50/75/100 families support Digit Matches; the proposal
+        // request in the demo engine is the final contract-availability check.
         const history=await paced({ticks_history:symbol,count:100,end:"latest",style:"ticks"});
         const pip=Number(item.pip_size||item.pip),quotes=(history.history?.prices||[]).map(p=>quoteWithPipSize(p,pip)),analysis=analyze(quotes,threshold);
-        results.push({name,symbol,active:true,matchAvailable:true,status:analysis.hasSignal?"QUALIFYING":"WAITING_FOR_SIGNAL",...analysis});
+        results.push({name,symbol,active:true,matchAvailable:true,eligibility:"Digit Matches proposal is verified at purchase time",status:analysis.hasSignal?"QUALIFYING":"WAITING_FOR_SIGNAL",...analysis});
       }catch(error){
         if(isRateLimit(error))throw error;
         results.push({name,symbol,active:true,matchAvailable:false,status:"CHECK_FAILED",reason:error?.message||"Deriv check failed"});
       }
     }
     results.sort((a,b)=>Number(b.status==="QUALIFYING")-Number(a.status==="QUALIFYING")||Number(b.topDigits?.[0]?.percent||0)-Number(a.topDigits?.[0]?.percent||0));
-    return Response.json({ok:true,strategy:"DIGITMATCH",threshold,windows:WINDOWS,marketsDiscovered:all.filter(isVolatility).length,marketsChecked:results.length,validMarkets:results.filter(x=>x.matchAvailable).length,qualifyingMarkets:results.filter(x=>x.status==="QUALIFYING").length,scannedAt:new Date().toISOString(),requestPolicy:{activeSymbolsCacheMinutes:15,contractsForCacheHours:6,minimumGapMs:REQUEST_GAP_MS,sequentialMarketChecks:true,maxMarkets:MAX_CANDIDATES,volatilityFamilies:[10,25,50,75,100],includeOneSecondVariants:true},results},{headers:{"cache-control":"no-store"}});
+    return Response.json({ok:true,strategy:"DIGITMATCH",threshold,windows:WINDOWS,marketsDiscovered:all.filter(isVolatility).length,marketsChecked:results.length,validMarkets:results.filter(x=>x.matchAvailable).length,qualifyingMarkets:results.filter(x=>x.status==="QUALIFYING").length,scannedAt:new Date().toISOString(),requestPolicy:{activeSymbolsCacheMinutes:60,minimumGapMs:REQUEST_GAP_MS,sequentialMarketChecks:true,maxMarkets:MAX_CANDIDATES,oneMarketPerVolatilityFamily:true,volatilityFamilies:[10,25,50,75,100],preferOneSecondVariants:true,contractsForChecksSkipped:true},results},{headers:{"cache-control":"no-store"}});
   }catch(error){
     const limited=isRateLimit(error);
-    return Response.json({ok:false,message:limited?"Deriv rate limit reached. Scanning paused automatically; wait before starting again.":(error?.message||"Market scan failed"),rateLimited:limited,retryAfterSeconds:limited?60:undefined,results:[]},{status:limited?429:502,headers:{"cache-control":"no-store","retry-after":limited?"60":"0"}});
+    if(limited&&cache){try{const until=Date.now()+RATE_LIMIT_COOLDOWN_MS;await cache.put(pauseKey,new Response(JSON.stringify({until}),{headers:{"content-type":"application/json","cache-control":"public, max-age=300"}}));}catch{}}
+    return Response.json({ok:false,message:limited?"Deriv rate limit reached. Scanning paused automatically for 5 minutes.":(error?.message||"Market scan failed"),rateLimited:limited,retryAfterSeconds:limited?300:undefined,results:[]},{status:limited?429:502,headers:{"cache-control":"no-store","retry-after":limited?"300":"0"}});
   }finally{try{ws?.close();}catch{}}
 }
