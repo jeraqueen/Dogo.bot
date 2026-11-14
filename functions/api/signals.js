@@ -1,81 +1,77 @@
-import { DIGIT_MARKETS } from "../_lib/digit-markets.js";
-import { openPublicSocket } from "../_lib/deriv-connect.js";
-import { evaluateDigitDiffers } from "../_lib/digit-strategy.js";
+import { openPublicSocket, derivRequest } from "../_lib/deriv-connect.js";
 
+const WINDOWS=[100,50,25,10], MIN_PERCENT=11.8, MAX_CANDIDATES=5;
+const ACTIVE_SYMBOLS_TTL=60*60, REQUEST_GAP_MS=10000, RATE_LIMIT_COOLDOWN_MS=15*60*1000;
 
-function openDerivSocket() {
-  return openPublicSocket();
-}
+function quoteWithPipSize(price,pipSize){const decimals=Number.isFinite(pipSize)&&pipSize>0?Math.max(0,Math.min(10,Math.round(-Math.log10(pipSize)))):2;return Number(price).toFixed(decimals);}
+function lastDigit(quote){const s=String(quote??"").trim();if(!/^-?\d+(?:\.\d+)?$/.test(s))return null;const fraction=s.split(".")[1]||"";const digit=(fraction||s.replace("-","")).slice(-1);return /^\d$/.test(digit)?Number(digit):null;}
+function distribution(quotes,size){const sample=quotes.slice(-size);if(sample.length<size)return null;const counts=Array(10).fill(0);for(const quote of sample){const digit=lastDigit(quote);if(digit===null)return null;counts[digit]++;}return counts.map((count,digit)=>({digit,count,percent:Number((count/size*100).toFixed(2))})).sort((a,b)=>b.count-a.count||a.digit-b.digit);}
+function getSymbol(item){return item.symbol||item.underlying_symbol||"";}
+function getName(item){return item.display_name||item.underlying_symbol_name||item.symbol||item.underlying_symbol||"Volatility market";}
+function family(item){return getName(item).match(/volatility\s*(10|25|50|75|100)/i)?.[1]||"";}
+function isVolatility(item){return !!family(item);}
+function analyze(quotes,threshold){const windows={};for(const size of WINDOWS)windows[size]=distribution(quotes,size);const windowLeaders={};for(const size of WINDOWS)windowLeaders[size]=(windows[size]||[]).slice(0,2).map((x,i)=>({...x,rank:i+1}));if(!windows[100])return{valid:false,reason:"INSUFFICIENT_TICKS",tickCount:quotes.length,requiredTicks:100,windowLeaders,windows:windowLeaders};const topDigits=windows[100].slice(0,2).map((item,index)=>{const qualifyingWindows=WINDOWS.filter(size=>(windows[size]||[]).some(x=>x.digit===item.digit&&x.percent>=threshold));return{...item,rank:index+1,qualifying:item.percent>=threshold||qualifyingWindows.length>=2,qualifyingWindows};});const qualifying=topDigits.filter(x=>x.qualifying);return{valid:true,hasSignal:qualifying.length>0,tickCount:quotes.length,mostAppearing:topDigits[0]?.digit??null,predictedDigits:qualifying.map(x=>x.digit),predictedDigit:qualifying[0]?.digit??null,topDigits,windowLeaders,windows:windowLeaders,threshold};}
 
-function request(ws, payload, requestId) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      ws.removeEventListener("message", onMessage);
-      reject(new Error("Deriv market-data request timed out"));
-    }, 8000);
-    function onMessage(event) {
-      let message;
-      try { message = JSON.parse(event.data); } catch { return; }
-      if (message.req_id !== requestId) return;
-      clearTimeout(timer);
-      ws.removeEventListener("message", onMessage);
-      if (message.error) reject(new Error(message.error.message || "Deriv request failed"));
-      else resolve(message);
-    }
-    ws.addEventListener("message", onMessage);
-    ws.send(JSON.stringify({ ...payload, req_id: requestId }));
-  });
-}
-
-function quoteWithPipSize(price, pipSize) {
-  const decimals = Number.isFinite(pipSize) && pipSize > 0
-    ? Math.max(0, Math.min(10, Math.round(-Math.log10(pipSize))))
-    : 2;
-  return Number(price).toFixed(decimals);
-}
-
-export async function onRequestGet() {
-  let ws;
-  try {
-    ws = await openDerivSocket();
-    const symbols = await request(ws, { active_symbols: "brief", product_type: "basic" }, 1);
-    const active = new Map((symbols.active_symbols || []).map(item => [item.symbol, item]));
-    const results = [];
-
-    for (let i = 0; i < DIGIT_MARKETS.length; i++) {
-      const market = DIGIT_MARKETS[i];
-      const meta = active.get(market.symbol);
-      if (!meta) {
-        results.push({ ...market, eligible: false, reason: "MARKET_NOT_AVAILABLE" });
-        continue;
-      }
-      const history = await request(ws, {
-        ticks_history: market.symbol,
-        count: 100,
-        end: "latest",
-        style: "ticks"
-      }, 100 + i);
-      const pipSize = Number(meta.pip_size || meta.pip);
-      const quotes = (history.history?.prices || []).map(price => quoteWithPipSize(price, pipSize));
-      const signal = evaluateDigitDiffers(quotes, 100);
-      results.push({ ...market, ...signal });
-    }
-
-    return Response.json({
-      ok: true,
-      mode: "signal-scan-only",
-      scannedAt: new Date().toISOString(),
-      strategy: "DIGITDIFF",
-      marketsScanned: results.length,
-      results
-    }, { headers: { "cache-control": "no-store" } });
-  } catch (error) {
-    return Response.json({
-      ok: false,
-      mode: "signal-scan-only",
-      message: error?.message || "Market scan failed"
-    }, { status: 502, headers: { "cache-control": "no-store" } });
-  } finally {
-    try { ws?.close(); } catch {}
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function cachedRequest(cacheKey,ttlSeconds,load){
+  const cache=globalThis.caches?.default;
+  const key=new Request("https://dogo-cache.invalid/deriv/"+cacheKey);
+  if(cache){
+    try{
+      const hit=await cache.match(key);
+      if(hit){const saved=await hit.json();if(saved?.cachedAt&&Date.now()-saved.cachedAt<ttlSeconds*1000)return saved.value;}
+    }catch{}
   }
+  const value=await load();
+  if(cache){
+    try{await cache.put(key,new Response(JSON.stringify({cachedAt:Date.now(),value}),{headers:{"content-type":"application/json","cache-control":"public, max-age="+ttlSeconds}}));}catch{}
+  }
+  return value;
+}
+function isRateLimit(error){return /ratelimit|rate.?limit|too many requests|\b429\b/i.test(String(error?.message||""));}
+export async function onRequestGet({request}){
+  const url=new URL(request.url),threshold=Number(url.searchParams.get("threshold")||MIN_PERCENT);
+  if(!Number.isFinite(threshold)||threshold<MIN_PERCENT||threshold>100)return Response.json({ok:false,message:"Frequency threshold must be between 11.8 and 100."},{status:400});
+  const cache=globalThis.caches?.default;
+  const pauseKey=new Request("https://dogo-cache.invalid/deriv/rate-limit-pause-v1");
+  if(cache){try{const pause=await cache.match(pauseKey);if(pause){const data=await pause.json();const remaining=Math.max(1,Math.ceil(((Number(data.until)||Date.now())-Date.now())/1000));return Response.json({ok:false,message:"Deriv rate limit cooldown is active. Please wait before scanning again.",rateLimited:true,retryAfterSeconds:remaining,results:[]},{status:429,headers:{"cache-control":"no-store","retry-after":String(remaining)}});}}catch{}}
+  let ws;
+  try{
+    ws=await openPublicSocket();
+    let reqId=1,lastRequestAt=0;
+    const paced=async payload=>{
+      const wait=Math.max(0,REQUEST_GAP_MS-(Date.now()-lastRequestAt));
+      if(wait)await sleep(wait);
+      lastRequestAt=Date.now();
+      return derivRequest(ws,payload,reqId++);
+    };
+    const all=await cachedRequest("active-symbols-brief-v2",ACTIVE_SYMBOLS_TTL,async()=>{
+      const response=await paced({active_symbols:"brief"});
+      return response.active_symbols||[];
+    });
+    const candidates=all.filter(item=>isVolatility(item)&&getSymbol(item))
+      .sort((x,y)=>Number(getName(y).toLowerCase().includes("(1s)"))-Number(getName(x).toLowerCase().includes("(1s)")))
+      .filter((item,index,array)=>array.findIndex(x=>family(x)===family(item))===index)
+      .slice(0,MAX_CANDIDATES);
+    const results=[];
+    for(const item of candidates){
+      const symbol=getSymbol(item),name=getName(item);
+      try{
+        // Volatility 10/25/50/75/100 families support Digit Matches; the proposal
+        // request in the demo engine is the final contract-availability check.
+        const history=await paced({ticks_history:symbol,count:100,end:"latest",style:"ticks"});
+        const pip=Number(item.pip_size||item.pip),quotes=(history.history?.prices||[]).map(p=>quoteWithPipSize(p,pip)),analysis=analyze(quotes,threshold);
+        results.push({name,symbol,active:true,matchAvailable:true,eligibility:"Digit Matches proposal is verified at purchase time",status:analysis.hasSignal?"QUALIFYING":"WAITING_FOR_SIGNAL",...analysis});
+      }catch(error){
+        if(isRateLimit(error))throw error;
+        results.push({name,symbol,active:true,matchAvailable:false,status:"CHECK_FAILED",reason:error?.message||"Deriv check failed"});
+      }
+    }
+    results.sort((a,b)=>Number(b.status==="QUALIFYING")-Number(a.status==="QUALIFYING")||Number(b.topDigits?.[0]?.percent||0)-Number(a.topDigits?.[0]?.percent||0));
+    return Response.json({ok:true,strategy:"DIGITMATCH",threshold,windows:WINDOWS,marketsDiscovered:all.filter(isVolatility).length,marketsChecked:results.length,validMarkets:results.filter(x=>x.matchAvailable).length,qualifyingMarkets:results.filter(x=>x.status==="QUALIFYING").length,scannedAt:new Date().toISOString(),requestPolicy:{activeSymbolsCacheMinutes:60,minimumGapMs:REQUEST_GAP_MS,sequentialMarketChecks:true,maxMarkets:MAX_CANDIDATES,oneMarketPerVolatilityFamily:true,volatilityFamilies:[10,25,50,75,100],preferOneSecondVariants:true,contractsForChecksSkipped:true},results},{headers:{"cache-control":"no-store"}});
+  }catch(error){
+    const limited=isRateLimit(error);
+    if(limited&&cache){try{const until=Date.now()+RATE_LIMIT_COOLDOWN_MS;await cache.put(pauseKey,new Response(JSON.stringify({until}),{headers:{"content-type":"application/json","cache-control":"public, max-age=300"}}));}catch{}}
+    return Response.json({ok:false,message:limited?"Deriv rate limit reached. Scanning paused automatically for 5 minutes.":(error?.message||"Market scan failed"),rateLimited:limited,retryAfterSeconds:limited?300:undefined,results:[]},{status:limited?429:502,headers:{"cache-control":"no-store","retry-after":limited?"300":"0"}});
+  }finally{try{ws?.close();}catch{}}
 }
