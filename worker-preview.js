@@ -13,7 +13,29 @@ function ask(ws,p,id,timeout=12000){return new Promise((resolve,reject)=>{let se
 const decimals=p=>Number.isFinite(p)&&p>0?Math.max(0,Math.min(10,Math.round(-Math.log10(p)))):2;
 function distribution(prices,n,pip){const sample=prices.slice(-n);if(sample.length<n)return[];const counts=Array(10).fill(0);for(const price of sample){const fraction=Number(price).toFixed(decimals(pip)).split(".")[1]||"",digit=fraction.slice(-1);if(!/^\d$/.test(digit))return[];counts[Number(digit)]++;}return counts.map((count,digit)=>({digit,count,percent:+(count/n*100).toFixed(2)})).sort((a,b)=>b.count-a.count||a.digit-b.digit);}
 const isVol=name=>/volatility\s*(10|15|20|25|30|50|75|90|100)/i.test(String(name||""));
-async function scanSignals(){const ws=await openSocket("wss://api.derivws.com/trading/v1/options/ws/public","public");try{let id=1,last=0;const send=async p=>{const wait=Math.max(0,350-(Date.now()-last));if(wait)await sleep(wait);last=Date.now();return ask(ws,p,id++);};const a=await send({active_symbols:"brief"}),markets=(a.active_symbols||[]).filter(x=>isVol(x.display_name||x.underlying_symbol_name||x.symbol)&&x.symbol).slice(0,18),found=[];for(const m of markets){try{const cf=await send({contracts_for:m.symbol});if(!(cf.contracts_for?.available||[]).some(x=>x.contract_type==="DIGITMATCH"))continue;const h=await send({ticks_history:m.symbol,count:100,end:"latest",style:"ticks"}),w={};for(const n of [100,50,25,10])w[n]=distribution(h.history?.prices||[],n,Number(m.pip_size||m.pip));if(!w[100].length)continue;const top=w[100].slice(0,2).map(x=>({...x,qualifying:x.percent>=11.8||[100,50,25,10].filter(n=>(w[n]||[]).some(y=>y.digit===x.digit&&y.percent>=11.8)).length>=2}));for(const x of top.filter(x=>x.qualifying))found.push({symbol:m.symbol,name:m.display_name||m.underlying_symbol_name||m.symbol,digit:x.digit,percent:x.percent,windows:Object.fromEntries([100,50,25,10].map(n=>[n,(w[n]||[]).slice(0,2)]))});}catch(e){if(isRateLimit(e))throw e;}}return found.sort((a,b)=>b.percent-a.percent);}finally{try{ws.close();}catch{}}}
+async function scanSignals(){
+ const ws=await openSocket("wss://api.derivws.com/trading/v1/options/ws/public","public");
+ try{
+  let id=1,last=0;
+  const send=async p=>{const wait=Math.max(0,2500-(Date.now()-last));if(wait)await sleep(wait);last=Date.now();return ask(ws,p,id++);};
+  const a=await send({active_symbols:"brief"});
+  const markets=(a.active_symbols||[])
+   .filter(x=>isVol(x.display_name||x.underlying_symbol_name||x.symbol)&&x.symbol)
+   .sort((x,y)=>Number(String(y.display_name||y.underlying_symbol_name||y.symbol).toLowerCase().includes("(1s)"))-Number(String(x.display_name||x.underlying_symbol_name||x.symbol).toLowerCase().includes("(1s)")))
+   .filter((m,i,arr)=>arr.findIndex(x=>family(x.display_name||x.underlying_symbol_name||x.symbol)===family(m.display_name||m.underlying_symbol_name||m.symbol))===i)
+   .slice(0,5),found=[];
+  for(const m of markets){
+   try{
+    const h=await send({ticks_history:m.symbol,count:100,end:"latest",style:"ticks"}),w={};
+    for(const n of [100,50,25,10])w[n]=distribution(h.history?.prices||[],n,Number(m.pip_size||m.pip));
+    if(!w[100].length)continue;
+    const top=w[100].slice(0,2).map(x=>({...x,qualifying:x.percent>=11.8||[100,50,25,10].filter(n=>(w[n]||[]).some(y=>y.digit===x.digit&&y.percent>=11.8)).length>=2}));
+    for(const x of top.filter(x=>x.qualifying))found.push({symbol:m.symbol,name:m.display_name||m.underlying_symbol_name||m.symbol,digit:x.digit,percent:x.percent,windows:Object.fromEntries([100,50,25,10].map(n=>[n,(w[n]||[]).slice(0,2)]))});
+   }catch(e){if(isRateLimit(e))throw e;}
+  }
+  return found.sort((a,b)=>b.percent-a.percent);
+ }finally{try{ws.close();}catch{}}
+}
 export class DogoTrader{
  constructor(ctx,env){this.ctx=ctx;this.env=env;this.busy=false;this.demoWs=null;}
  async get(){return (await this.ctx.storage.get("state"))||initial();}
