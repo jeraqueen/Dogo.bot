@@ -143,8 +143,9 @@ export class DogoTrader{
   this.previewTradeBusy=true;this.previewLastAttempt=Date.now();
   try{
    let s=await this.previewGet();
-   if(!s.active||s.openContract||s.purchasePending||Number(s.marketWins?.[symbol]||0)>=2||(s.currentMarket&&s.currentMarket!==symbol))return;
-   s.currentMarket=symbol;await this.previewPut(s);
+   if(!s.active||s.openContract||s.purchasePending)return;
+   if(!s.currentMarket){const next=this.previewMarkets.find(m=>Number(s.marketWins?.[m.symbol]||0)<2);s.currentMarket=next?.symbol||null;if(s.currentMarket)await this.previewPut(s);}
+   if(!s.currentMarket||s.currentMarket!==symbol||Number(s.marketWins?.[symbol]||0)>=2)return;
    const ws=await this.previewConnection();
    const proposal=await ask(ws,{proposal:1,amount:s.stake,basis:"stake",contract_type:"DIGITMATCH",currency:"USD",duration:1,duration_unit:"t",underlying_symbol:symbol,barrier:String(signal.greenDigit)},this.previewReqId++);
    const q=proposal.proposal;if(!q?.id||!Number.isFinite(Number(q.ask_price)))throw Error("Deriv did not return a valid one-tick DIGITMATCH proposal.");
