@@ -48,7 +48,7 @@ async function scan(ws){
 }
 export class DogoTrader{
  constructor(ctx,env){this.ctx=ctx;this.env=env;this.busy=false;this.isPreview=ctx.id.equals(env.TRADER.idFromName("dogo-preview-main"));this.demoWs=null;this.previewTickListenerWs=null;this.previewPublicWs=null;this.previewDemoWs=null;this.previewReqId=1000;this.previewBuffers={};this.previewMeta={};this.previewMarkets=[];this.previewSubs={};this.previewFeedReady=false;this.previewTradeBusy=false;this.previewLastPersist=0;this.previewLastAttempt=0;}
- async get(){return await this.ctx.storage.get("state")||{active:false,mode:"DEMO",stake:1,cycleNumber:1,contractsOpened:0,wins:0,losses:0,grossProfit:0,netProfit:0,marketWins:{},transactions:[],signals:[],scannedAt:null,openContract:null,lastError:null};}
+ async get(){return await this.ctx.storage.get("state")||{active:false,mode:"DEMO",stake:1,cycleNumber:1,contractsOpened:0,wins:0,losses:0,grossProfit:0,netProfit:0,marketWins:{},transactions:[],signals:[],scannedAt:null,openContract:null,purchasePending:null,purchaseUncertain:false,lastError:null};}
  async connection(){if(this.demoWs&&this.demoWs.readyState===1)return {ws:this.demoWs};const d=await demoSocket(this.env);this.demoWs=d.ws;return d;}
  closeConnection(){try{this.demoWs?.close();}catch{}this.demoWs=null;}
 
@@ -178,7 +178,7 @@ export class DogoTrader{
    catch(e){const failed=await this.previewGet();failed.active=false;failed.feedStatus="ERROR";failed.feedError=e?.message||"Could not start live market feed";failed.lastError=failed.feedError;previewEvent(failed,"Live monitor failed: "+failed.feedError,"error");await this.previewPut(failed);this.previewClosePublic();return previewJson({ok:false,active:false,message:failed.feedError},502);}
   }
   if(req.method==="POST"&&p==="/stop"){
-   const s=await this.previewGet();s.active=false;previewEvent(s,s.openContract?"Stop requested · no new purchases; current demo contract will settle.":"Live scanner and 
+   const s=await this.previewGet();s.active=false;previewEvent(s,s.openContract?"Stop requested · no new purchases; current d
 
 --- TRUNCATED ---
-Response was ~9,132 tokens (limit: 6,000). Use more specific queries to reduce response size.
+Response was ~9,618 tokens (limit: 6,000). Use more specific queries to reduce response size.
