@@ -67,31 +67,34 @@ export async function getDemoAccount(env) {
     : "No demo account was returned for this token. Check the token and its trade scope.");
 }
 
-function openSocket(url, label) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const socket = new WebSocket(url);
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try { socket.close(); } catch {}
-      reject(new DerivError("websocket", `Timed out opening the Deriv ${label} WebSocket.`));
-    }, 10000);
-    socket.addEventListener("open", () => {
-      if (settled) { try { socket.close(); } catch {} return; }
-      settled = true; clearTimeout(timer); resolve(socket);
-    }, { once:true });
-    socket.addEventListener("error", () => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      reject(new DerivError("websocket", `Deriv rejected the ${label} WebSocket connection.`));
-    }, { once:true });
-    socket.addEventListener("close", event => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      reject(new DerivError("websocket", `Deriv closed the ${label} WebSocket before opening (code ${event.code || "unknown"}).`));
-    }, { once:true });
-  });
+async function openSocket(url, label) {
+  // Cloudflare Workers supports outbound WebSockets through an HTTP Upgrade
+  // fetch. This also lets us report the actual HTTP rejection instead of
+  // hiding it behind a generic WebSocket error event.
+  let response;
+  try {
+    const httpUrl = url.replace(/^wss:/i, "https:");
+    response = await fetch(httpUrl, { headers: { Upgrade: "websocket" } });
+  } catch (error) {
+    throw new DerivError("websocket",
+      `Could not reach the Deriv ${label} WebSocket endpoint: ${error?.message || "network error"}`);
+  }
+  const socket = response?.webSocket;
+  if (!socket) {
+    let detail = "";
+    try { detail = (await response.text()).slice(0, 400); } catch {}
+    throw new DerivError("websocket",
+      `Deriv ${label} WebSocket handshake failed (HTTP ${response?.status || "unknown"}).` +
+      (detail ? ` Response: ${detail}` : ""),
+      { httpStatus: response?.status ?? null });
+  }
+  try { socket.accept(); }
+  catch (error) {
+    try { socket.close(); } catch {}
+    throw new DerivError("websocket",
+      `Deriv ${label} WebSocket could not be accepted: ${error?.message || "socket error"}`);
+  }
+  return socket;
 }
 
 export async function openDemoSocket(env) {
