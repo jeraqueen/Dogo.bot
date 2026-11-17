@@ -31,7 +31,21 @@ button{border:1px solid #3a557e;background:#233b60;color:#f2f7ff;border-radius:9
  </header>
 
  <div class="grid">
-  <section class="card">
+   <section class="card">
+   <div class="row spread"><div><h2>Choose connection method</h2><p class="desc">Use Cloudflare when available, or connect directly to Deriv when Cloudflare usage is unavailable.</p></div><div class="pill">Demo account only</div></div>
+   <div class="row"><button id="modeCloud" class="primary" type="button">Cloudflare connection</button><button id="modeDirect" type="button">Direct Deriv connection</button></div>
+   <div id="cloudModeNote" class="status">Cloudflare mode uses the token stored securely in the Worker. Enter your Dogo.bot control PIN in Cloud trading controls, then choose Verify demo account.</div>
+   <div id="directModePanel" class="status hidden" style="margin-top:12px">
+    <strong>Direct Deriv demo connection</strong>
+    <p class="desc">This bypasses Cloudflare for account verification and the authenticated demo WebSocket. The token is used only in this page's memory and is not saved. This direct panel is for connection/balance verification only; automated cloud trading still requires Cloudflare.</p>
+    <div class="row"><div class="field"><label for="directAppId">Deriv App ID</label><input id="directAppId" value="34YMZX2XhnvKQLSY1Dzl6" autocomplete="off"></div><div class="field"><label for="directAccount">Demo account ID</label><input id="directAccount" value="DOT94101390" autocomplete="off"></div></div>
+    <label for="directToken">Deriv API token (PAT)</label><input id="directToken" type="password" autocomplete="off" placeholder="Paste your Deriv demo token here">
+    <div class="row" style="margin-top:12px"><button id="directConnect" class="primary" type="button">Connect directly</button><button id="directDisconnect" class="stop" type="button" disabled>Disconnect & clear token</button></div>
+    <div id="directMessage" class="status">Not connected. No trades will be placed by this direct connection panel.</div>
+    <div class="stats" style="margin-top:10px"><div class="stat"><small>Direct connection</small><strong id="directState">Disconnected</strong></div><div class="stat"><small>Demo account</small><strong id="directAccountState">—</strong></div><div class="stat"><small>Demo balance</small><strong id="directBalance">—</strong></div><div class="stat"><small>Currency</small><strong id="directCurrency">—</strong></div></div>
+   </div>
+  </section>
+<section class="card">
    <div class="row spread"><div><h2>Cloud trading controls</h2><p class="desc">The Cloudflare Worker owns the scanner and trading. Closing this page does not stop it.</p></div><div class="pill"><span class="dot" id="tradeDot"></span><span id="tradeState">Stopped</span></div></div>
    <div class="row">
     <div class="field"><label for="controlPin">Dogo.bot control PIN</label><input id="controlPin" type="password" autocomplete="current-password" placeholder="Enter your existing control PIN"></div>
@@ -105,6 +119,40 @@ button{border:1px solid #3a557e;background:#233b60;color:#f2f7ff;border-radius:9
 const WORKER="https://dogo-bot-api.fx77.workers.dev";
 const DEMO_ACCOUNT="DOT94101390";
 const $=id=>document.getElementById(id);
+const direct={ws:null,token:"",connected:false,req:0,timeout:null};
+function setMode(mode){const d=mode==="direct";$("directModePanel").classList.toggle("hidden",!d);$("cloudModeNote").classList.toggle("hidden",d);$("modeDirect").classList.toggle("primary",d);$("modeCloud").classList.toggle("primary",!d);}
+$("modeCloud").addEventListener("click",()=>setMode("cloud"));$("modeDirect").addEventListener("click",()=>setMode("direct"));
+function directStatus(message,kind=""){show("directMessage",message,kind);}
+function clearDirect(clearToken=true){if(direct.timeout)clearTimeout(direct.timeout);direct.timeout=null;if(direct.ws){try{direct.ws.close();}catch{}}direct.ws=null;direct.token="";direct.connected=false;$("directState").textContent="Disconnected";$("directAccountState").textContent="—";$("directBalance").textContent="—";$("directCurrency").textContent="—";$("directDisconnect").disabled=true;if(clearToken)$("directToken").value="";}
+async function directConnect(){
+ clearDirect(false);const token=$("directToken").value.trim(),appId=$("directAppId").value.trim(),accountId=$("directAccount").value.trim();
+ if(!token||!appId||!accountId){directStatus("Enter the Deriv token, App ID and demo account ID.","err");return;}
+ $("directConnect").disabled=true;
+ try{
+  direct.token=token;directStatus("Checking token and account permissions with Deriv…");
+  const headers={"Authorization":"Bearer "+token,"Deriv-App-ID":appId};
+  const ar=await fetch("https://api.derivws.com/trading/v1/options/accounts",{headers,cache:"no-store"});
+  const aj=await ar.json().catch(()=>({}));
+  if(!ar.ok)throw new Error((aj.errors||[]).map(e=>e.message).join("; ")||"Deriv account request failed (HTTP "+ar.status+"). Check token scope and App ID.");
+  const accounts=Array.isArray(aj.data)?aj.data:[];const acct=accounts.find(a=>String(a.account_id||a.id||"")===accountId);
+  if(!acct)throw new Error("The token did not return demo account "+accountId+". Check the account ID and token's trade scope.");
+  const currency=String(acct.currency||"").toUpperCase(),type=String(acct.account_type||acct.type||"").toLowerCase();
+  if(currency!=="USD")throw new Error("Account currency is "+(currency||"unknown")+", not USD. No connection opened.");
+  if(type&&!type.includes("demo")&&!type.includes("virtual"))throw new Error("Deriv did not identify this account as demo/virtual. Refusing to connect.");
+  directStatus("Demo USD account found. Requesting one-time WebSocket authentication…","ok");
+  const or=await fetch("https://api.derivws.com/trading/v1/options/accounts/"+encodeURIComponent(accountId)+"/otp",{method:"POST",headers,cache:"no-store"});
+  const oj=await or.json().catch(()=>({}));if(!or.ok)throw new Error((oj.errors||[]).map(e=>e.message).join("; ")||"Deriv OTP request failed (HTTP "+or.status+").");
+  const url=oj.data?.url;if(!url||!url.startsWith("wss://api.derivws.com/trading/v1/options/ws/demo"))throw new Error("Deriv did not return a valid demo WebSocket URL. Refusing a non-demo endpoint.");
+  directStatus("Opening authenticated demo WebSocket…");const ws=new WebSocket(url);direct.ws=ws;
+  direct.timeout=setTimeout(()=>{if(!direct.connected){clearDirect(false);directStatus("Timed out opening the demo WebSocket. Try again for a fresh OTP.","err");}},15000);
+  ws.onopen=()=>{direct.connected=true;clearTimeout(direct.timeout);direct.timeout=null;$("directState").textContent="Connected";$("directAccountState").textContent=accountId;$("directCurrency").textContent=currency;$("directDisconnect").disabled=false;directStatus("Authenticated demo WebSocket connected. Requesting read-only balance…","ok");ws.send(JSON.stringify({balance:1,subscribe:0,req_id:++direct.req}));};
+  ws.onmessage=event=>{let m;try{m=JSON.parse(event.data);}catch{return;}if(m.error){directStatus("Deriv WebSocket: "+(m.error.message||"Request failed"),"err");return;}if(m.msg_type==="balance"&&m.balance){$("directBalance").textContent=Number(m.balance.balance).toFixed(2);$("directCurrency").textContent=m.balance.currency||currency;directStatus("Direct demo connection verified. Balance received. No trades have been placed.","ok");}};
+  ws.onerror=()=>directStatus("WebSocket connection error. Check network access and try again.","err");
+  ws.onclose=()=>{if(direct.connected){direct.connected=false;$("directState").textContent="Disconnected";$("directDisconnect").disabled=true;directStatus("Demo WebSocket closed. Reconnect to request a fresh OTP.");}direct.token="";};
+ }catch(e){clearDirect(false);directStatus(e.message||"Direct Deriv connection failed.","err");}finally{$("directConnect").disabled=false;}
+}
+$("directConnect").addEventListener("click",directConnect);$("directDisconnect").addEventListener("click",()=>{clearDirect(true);directStatus("Disconnected. The token field has been cleared.");});window.addEventListener("beforeunload",()=>clearDirect(true));
+
 let pin="",verified=false,lastState=null,refreshBusy=false,pollId=null;
 const usd=n=>(Number(n||0)<0?"-":"")+"$"+Math.abs(Number(n||0)).toFixed(2);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
