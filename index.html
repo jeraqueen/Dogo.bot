@@ -158,7 +158,7 @@ function render(s){lastState=s;const active=!!s.active,open=s.openContracts|| (s
 async function refresh(){if(refreshBusy||!pin)return;refreshBusy=true;try{const s=await api("/api/preview/trading/state");render(s);}catch(e){if(!lastState)show("mainMessage",e.message,"err");}finally{refreshBusy=false;}}
 $("verify").addEventListener("click",verify);$("testConnection").addEventListener("click",async()=>{try{await checkWorker();show("mainMessage","Cloudflare is reachable. Now verify the demo account.","ok");}catch(e){show("mainMessage",e.message,"err");}});$("start").addEventListener("click",start);$("stop").addEventListener("click",stop);$("reconcile").addEventListener("click",reconcile);$("refresh").addEventListener("click",refresh);
 $("controlPin").addEventListener("input",()=>{verified=false;$("start").disabled=true;});
-pollId=setInterval(refresh,2500);
+pollId=setInterval(refresh,5000);
 </script>
 </body>
 </html>
